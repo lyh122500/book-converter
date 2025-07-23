@@ -47,9 +47,10 @@ def save_segments(segments, output_dir):
 if __name__ == "__main__":
     book_title = "霍乱时期的爱情 (加西亚·马尔克斯) (Z-Library)_preprocessed"
     # 示例使用
+    target_length = 10000  # 目标长度（字符数）
     input_file = book_title + ".txt"
-    output_dir = book_title
-    target_length = 5000  # 目标长度（字符数）
+    output_dir = book_title + '_' + str(target_length)
+
 
     with open(input_file, "r", encoding="utf-8") as f:
         text = f.read()
