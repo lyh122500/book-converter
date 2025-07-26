@@ -1,8 +1,13 @@
 import re
 import unicodedata
+from pathlib import Path
+
 from zhon.hanzi import punctuation as cn_punctuation
 import jieba
+import os
 from opencc import OpenCC
+
+import graph_divider
 
 
 def preprocess_text(text, book_title):
@@ -177,13 +182,56 @@ def optimize_tokenization(text):
 
 
 # 使用示例
-if __name__ == "__main__":
-    book_title = "霍乱时期的爱情 (加西亚·马尔克斯) (Z-Library)"
-    with open(f"{book_title}.txt", "r", encoding="utf-8") as f:
+def process_single_file(file_path, target_length=10000):
+    """处理单个文件"""
+    # 获取不带扩展名的文件名
+    book_title = Path(file_path).stem
+
+    print(f"正在处理: {book_title}")
+
+    # 读取并预处理文本
+    with open(file_path, "r", encoding="utf-8") as f:
         raw_text = f.read()
 
     processed_text = preprocess_text(raw_text, book_title)
 
     # 保存预处理后的文本
-    with open(f"{book_title}_preprocessed.txt", "w", encoding="utf-8") as f:
+    processed_path = f"{book_title}_preprocessed.txt"
+    with open(processed_path, "w", encoding="utf-8") as f:
         f.write(processed_text)
+
+    # 分句并分割为固定长度段落
+    sentences = graph_divider.sentence_tokenize(processed_text)
+    segments = graph_divider.fixed_length_segment(sentences, target_length)
+
+    # 保存结果
+    output_dir = f"./data/{book_title}_{target_length}"
+    graph_divider.save_segments(segments, output_dir)
+
+    print(f"完成处理: {book_title}")
+
+
+def process_directory(directory_path, target_length=10000):
+    """处理目录下的所有txt文件"""
+    # 确保目录存在
+    if not os.path.isdir(directory_path):
+        print(f"错误: 目录 {directory_path} 不存在")
+        return
+
+    # 遍历目录下的所有文件
+    for filename in os.listdir(directory_path):
+        if filename.endswith(".txt"):
+            file_path = os.path.join(directory_path, filename)
+            try:
+                process_single_file(file_path, target_length)
+            except Exception as e:
+                print(f"处理文件 {filename} 时出错: {str(e)}")
+
+
+if __name__ == "__main__":
+    # 设置目标目录和段落长度
+    target_directory = "D:\\360安全浏览器下载\历史\名著"
+    segment_length = 10000  # 目标长度（字符数）
+
+    # 处理目录中的所有txt文件
+    process_directory(target_directory, segment_length)
