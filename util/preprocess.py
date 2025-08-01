@@ -215,23 +215,16 @@ def process_single_file(session_id: str, target_length: int = 10000, redis_conn=
 
     # 预处理文本
     processed_text = preprocess_text(content, book_title)
-
     # 分句并分割为固定长度段落
     sentences = graph_divider.sentence_tokenize(processed_text)
-    print(sentences)
     segments = graph_divider.fixed_length_segment(sentences, target_length)
-    print(segments)
     # 单独存储分段以便快速访问
-    segment_data = {str(i): seg for i, seg in enumerate(segments)}
-    redis_conn.hset(
-        f"session:{session_id}:segments",
-        mapping=segment_data
-    )
+    for i, seg in enumerate(segments):
+        redis_conn.hset(f"session:{session_id}:segments", str(i), seg)
     redis_conn.expire(
         f"session:{session_id}:segments",
-        Config.RATE_LIMIT
+        Config.SESSION_EXPIRE
     )
-    print('ok')
 
     # 更新会话元数据
     redis_conn.hset(

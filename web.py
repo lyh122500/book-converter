@@ -222,9 +222,6 @@ def process_file():
         return jsonify({'error': str(e)}), 500
 
 
-
-
-
 @app.route('/api/session/<session_id>', methods=['GET'])
 @limiter.limit(app.config['RATE_LIMIT'])
 def get_session_status(session_id):
