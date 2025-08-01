@@ -52,6 +52,7 @@ def cleanup_session(session_id):
         f"session:{session_id}:file",
         f"session:{session_id}:segments",
         f"session:{session_id}:meta",
+        f"session:{session_id}:content",
         f"ratelimit:{session_id}"
     ]
     r.delete(*keys)
@@ -165,7 +166,6 @@ def upload_file():
         file_data = {
             'filename': filename,
             'content_type': content_type,
-            'content': file_content,
             'size': len(file_content)
         }
 
@@ -173,6 +173,12 @@ def upload_file():
             f"session:{session_id}:file",
             int(app.config['SESSION_EXPIRE'].total_seconds()),
             json.dumps(file_data)
+        )
+
+        r.setex(
+            f"session:{session_id}:content",
+            int(app.config['SESSION_EXPIRE'].total_seconds()),
+            file_content
         )
 
         # 更新会话状态
@@ -220,6 +226,16 @@ def process_file():
         }), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/novel/make_summary', methods=['POST'])
+@limiter.limit(app.config['RATE_LIMIT'])
+def make_summary(session_id):
+
+
+
+
+
 
 
 @app.route('/api/session/<session_id>', methods=['GET'])
