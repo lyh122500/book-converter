@@ -9,6 +9,8 @@ import os
 from opencc import OpenCC
 
 from config.global_config import Config
+from dao import redisDao
+from dao.redisDao import RedisDao
 from util import graph_divider
 
 
@@ -183,7 +185,7 @@ def optimize_tokenization(text):
     return '\n'.join(processed_paragraphs)
 
 
-def process_single_file(session_id: str, target_length: int = 10000, redis_conn=None):
+def process_single_file(session_id: str, redisDao: RedisDao, target_length: int = 10000, ):
     """
     处理存储在Redis中的单个文件
 
@@ -201,13 +203,10 @@ def process_single_file(session_id: str, target_length: int = 10000, redis_conn=
         }
     """
     # 从Redis获取文件数据
-    file_data = redis_conn.get(f"session:{session_id}:file")
-    if not file_data:
-        raise ValueError("File not found in Redis storage")
 
-    file_data = json.loads(file_data)
-    content = file_data['content']
-    filename = file_data.get('filename', 'unnamed_file')
+    file_data = redisDao.get_file_metadata(session_id)
+    filename = file_data['filename']
+    content = redisDao.get_file_content(session_id)
 
     # 获取不带扩展名的文件名作为标题
     book_title = Path(filename).stem
@@ -218,23 +217,9 @@ def process_single_file(session_id: str, target_length: int = 10000, redis_conn=
     # 分句并分割为固定长度段落
     sentences = graph_divider.sentence_tokenize(processed_text)
     segments = graph_divider.fixed_length_segment(sentences, target_length)
-    # 单独存储分段以便快速访问
-    for i, seg in enumerate(segments):
-        redis_conn.hset(f"session:{session_id}:segments", str(i), seg)
-    redis_conn.expire(
-        f"session:{session_id}:segments",
-        Config.SESSION_EXPIRE
-    )
 
-    # 更新会话元数据
-    redis_conn.hset(
-        f"session:{session_id}:meta",
-        mapping={
-            'status': 'processed',
-            'last_active': time.time()
-        }
-    )
-    return f"完成处理: {book_title}, 生成 {len(segments)} 个分段"
+    print(f"完成处理: {book_title}, 生成 {len(segments)} 个分段")
+    return segments
 
 
 def process_directory(directory_path, target_length=10000):

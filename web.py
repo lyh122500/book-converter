@@ -1,4 +1,6 @@
+import asyncio
 import json
+import threading
 
 from flask import Flask, request, jsonify
 from flask_limiter import Limiter
@@ -10,18 +12,42 @@ import redis
 from datetime import timedelta
 
 from config.global_config import Config
+from dao.redisDao import RedisDao
+from util.asyncSummarizer import AsyncTextSummarizer
 from util.preprocess import process_single_file
 
 app = Flask(__name__)
 app.config.from_object(Config)
 
-redis_pool = redis.ConnectionPool(
-    host=Config.REDIS_HOST,
-    port=Config.REDIS_PORT,
-    db=Config.REDIS_DB,
-    password=Config.REDIS_PASSWORD,
-    decode_responses=True
-)
+# 全局事件循环和锁
+event_loop = None
+loop_lock = threading.Lock()
+
+def create_event_loop():
+    """创建并设置新的事件循环"""
+    global event_loop
+    new_loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(new_loop)
+    event_loop = new_loop
+    return new_loop
+
+def get_event_loop():
+    """获取当前线程的事件循环，如果没有则创建"""
+    global event_loop
+    try:
+        return asyncio.get_event_loop()
+    except RuntimeError:
+        with loop_lock:
+            if event_loop is None:
+                return create_event_loop()
+            return event_loop
+
+
+get_event_loop()
+
+redis_dao = RedisDao()
+summarizer = AsyncTextSummarizer()
+
 
 # Initialize rate limiter
 limiter = Limiter(
@@ -35,32 +61,9 @@ if not os.path.exists(app.config['UPLOAD_FOLDER']):
     os.makedirs(app.config['UPLOAD_FOLDER'])
 
 
-def get_redis_conn():
-    """获取Redis连接"""
-    return redis.Redis(connection_pool=redis_pool)
-
-
-def generate_session_id():
-    """生成唯一会话ID"""
-    return f"sess_{uuid.uuid4().hex}"
-
-
-def cleanup_session(session_id):
-    """清理会话数据"""
-    r = get_redis_conn()
-    keys = [
-        f"session:{session_id}:file",
-        f"session:{session_id}:segments",
-        f"session:{session_id}:meta",
-        f"session:{session_id}:content",
-        f"ratelimit:{session_id}"
-    ]
-    r.delete(*keys)
-
-
 def check_rate_limit(session_id):
     """检查会话级别的速率限制"""
-    r = get_redis_conn()
+    r = redis_dao.get_connection()
     rate_key = f"ratelimit:{session_id}"
 
     # 5 requests per second
@@ -77,7 +80,7 @@ def check_rate_limit(session_id):
 @limiter.limit(app.config['RATE_LIMIT'])
 def test_redis_connection():
     """测试 Redis 连接是否正常"""
-    r = get_redis_conn()
+    r = redis_dao.get_connection()
     try:
         if r.ping():
             return jsonify({
@@ -94,8 +97,8 @@ def test_redis_connection():
 def create_session():
     """创建新会话并返回session_id"""
     try:
-        session_id = generate_session_id()
-        r = get_redis_conn()
+        session_id = redis_dao.generate_session_id()
+        r = redis_dao.get_connection()
 
         # 初始化会话元数据
         r.hset(
@@ -130,7 +133,7 @@ def upload_file():
     if not check_rate_limit(session_id):
         return jsonify({'error': 'Rate limit exceeded for this session'}), 429
 
-    r = get_redis_conn()
+    r = redis_dao.get_connection()
 
     # 检查会话是否存在
     if not r.exists(f"session:{session_id}:meta"):
@@ -197,11 +200,10 @@ def upload_file():
         return jsonify({'error': 'File encoding error (only UTF-8 text files supported)'}), 400
     except Exception as e:
         app.logger.error(f"Upload error: {str(e)}")
-        cleanup_session(session_id)
         return jsonify({'error': 'File upload failed'}), 500
 
 
-@app.route('/api/novel/process', methods=['POST'])
+@app.route('/api/novel/summarize', methods=['POST'])
 @limiter.limit(app.config['RATE_LIMIT'])
 def process_file():
     """处理文件（示例接口）"""
@@ -213,29 +215,32 @@ def process_file():
     if not check_rate_limit(session_id):
         return jsonify({'error': 'Rate limit exceeded for this session'}), 429
 
-    r = get_redis_conn()
+    r = redis_dao.get_connection()
     if not r.exists(f"session:{session_id}:meta"):
         return jsonify({'error': 'Invalid or expired session_id'}), 404
     target_length = int(request.form.get('target_length'))
     try:
-        process_single_file(session_id, target_length, r)
+        segments = process_single_file(session_id, redis_dao,  target_length)
+        # 获取当前线程的事件循环
+        current_loop = get_event_loop()
+
+        # 在当前事件循环中运行协程
+        future = asyncio.run_coroutine_threadsafe(
+            summarizer.summarize_segments(segments),
+            current_loop
+        )
+        summary = future.result(timeout=60)  # 60秒超时
+        r.setex(
+            f"session:{session_id}:summary",
+            int(app.config['SESSION_EXPIRE'].total_seconds()),
+            summary
+        )
         return jsonify({
             'session_id': session_id,
-            'status': 'process finished',
-            'message': 'File processing initiated'
+            'message': 'summarize finished'
         }), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-
-
-@app.route('/api/novel/make_summary', methods=['POST'])
-@limiter.limit(app.config['RATE_LIMIT'])
-def make_summary(session_id):
-
-
-
-
-
 
 
 @app.route('/api/session/<session_id>', methods=['GET'])
@@ -246,7 +251,7 @@ def get_session_status(session_id):
     if not check_rate_limit(session_id):
         return jsonify({'error': 'Rate limit exceeded for this session'}), 429
 
-    r = get_redis_conn()
+    r = redis_dao.get_connection()
     meta = r.hgetall(f"session:{session_id}:meta")
 
     if not meta:
@@ -273,7 +278,7 @@ def delete_session(session_id):
     if not check_rate_limit(session_id):
         return jsonify({'error': 'Rate limit exceeded for this session'}), 429
 
-    cleanup_session(session_id)
+    redis_dao.cleanup_session(session_id)
     return jsonify({'message': f'Session {session_id} deleted'}), 200
 
 
