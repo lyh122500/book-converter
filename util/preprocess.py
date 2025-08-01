@@ -1,13 +1,15 @@
 import re
+import time
 import unicodedata
+import json
 from pathlib import Path
 
-from zhon.hanzi import punctuation as cn_punctuation
 import jieba
 import os
 from opencc import OpenCC
 
-import graph_divider
+from config.global_config import Config
+from util import graph_divider
 
 
 def preprocess_text(text, book_title):
@@ -181,34 +183,65 @@ def optimize_tokenization(text):
     return '\n'.join(processed_paragraphs)
 
 
-# 使用示例
-def process_single_file(file_path, target_length=10000):
-    """处理单个文件"""
-    # 获取不带扩展名的文件名
-    book_title = Path(file_path).stem
+def process_single_file(session_id: str, target_length: int = 10000, redis_conn=None):
+    """
+    处理存储在Redis中的单个文件
 
+    参数:
+        session_id: 会话ID
+        target_length: 目标分段长度
+        redis_conn: Redis连接对象
+
+    返回:
+        {
+            'book_title': str,
+            'segment_count': int,
+            'processed_text': str,
+            'segments': List[str]
+        }
+    """
+    # 从Redis获取文件数据
+    file_data = redis_conn.get(f"session:{session_id}:file")
+    if not file_data:
+        raise ValueError("File not found in Redis storage")
+
+    file_data = json.loads(file_data)
+    content = file_data['content']
+    filename = file_data.get('filename', 'unnamed_file')
+
+    # 获取不带扩展名的文件名作为标题
+    book_title = Path(filename).stem
     print(f"正在处理: {book_title}")
 
-    # 读取并预处理文本
-    with open(file_path, "r", encoding="utf-8") as f:
-        raw_text = f.read()
-
-    processed_text = preprocess_text(raw_text, book_title)
-
-    # 保存预处理后的文本
-    processed_path = f"{book_title}_preprocessed.txt"
-    with open(processed_path, "w", encoding="utf-8") as f:
-        f.write(processed_text)
+    # 预处理文本
+    processed_text = preprocess_text(content, book_title)
 
     # 分句并分割为固定长度段落
     sentences = graph_divider.sentence_tokenize(processed_text)
+    print(sentences)
     segments = graph_divider.fixed_length_segment(sentences, target_length)
+    print(segments)
+    # 单独存储分段以便快速访问
+    segment_data = {str(i): seg for i, seg in enumerate(segments)}
+    redis_conn.hset(
+        f"session:{session_id}:segments",
+        mapping=segment_data
+    )
+    redis_conn.expire(
+        f"session:{session_id}:segments",
+        Config.RATE_LIMIT
+    )
+    print('ok')
 
-    # 保存结果
-    output_dir = f"./data/{book_title}_{target_length}"
-    graph_divider.save_segments(segments, output_dir)
-
-    print(f"完成处理: {book_title}")
+    # 更新会话元数据
+    redis_conn.hset(
+        f"session:{session_id}:meta",
+        mapping={
+            'status': 'processed',
+            'last_active': time.time()
+        }
+    )
+    return f"完成处理: {book_title}, 生成 {len(segments)} 个分段"
 
 
 def process_directory(directory_path, target_length=10000):
@@ -226,12 +259,3 @@ def process_directory(directory_path, target_length=10000):
                 process_single_file(file_path, target_length)
             except Exception as e:
                 print(f"处理文件 {filename} 时出错: {str(e)}")
-
-
-if __name__ == "__main__":
-    # 设置目标目录和段落长度
-    target_directory = "D:\\360安全浏览器下载\历史\名著"
-    segment_length = 10000  # 目标长度（字符数）
-
-    # 处理目录中的所有txt文件
-    process_directory(target_directory, segment_length)

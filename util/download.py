@@ -226,7 +226,7 @@ def main():
         return
 
     # 创建下载目录
-    download_dir = "downloaded_books"
+    download_dir = "../downloaded_books"
     os.makedirs(download_dir, exist_ok=True)
 
     # 搜索书籍

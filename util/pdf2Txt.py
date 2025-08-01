@@ -51,4 +51,4 @@ def pdf_to_text_with_ocr(pdf_path, output_path=None, lang='chi_sim+eng'):
     return output_path
 
 if __name__ == "__main__":
-    txt_file = pdf_to_text_with_ocr('./downloaded_books/活着 (余华) (Z-Library).pdf')  # 自动生成input.txt
+    txt_file = pdf_to_text_with_ocr('../downloaded_books/活着 (余华) (Z-Library).pdf')  # 自动生成input.txt

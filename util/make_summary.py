@@ -69,7 +69,7 @@ async def process_single_file(filename):
         print(f"API处理失败 {filename}: {str(e)}")
 
 
-async def process_files():
+async def process_files(prompt):
     """主处理函数"""
     # 创建输出目录
     os.makedirs(OUTPUT_FOLDER, exist_ok=True)
