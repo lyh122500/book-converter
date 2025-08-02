@@ -14,6 +14,7 @@ from datetime import timedelta
 from config.global_config import Config
 from dao.redisDao import RedisDao
 from util.asyncSummarizer import AsyncTextSummarizer
+from util.author_configuration import get_author_info
 from util.preprocess import process_single_file
 
 app = Flask(__name__)
@@ -242,6 +243,113 @@ def process_file():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/novel/get_author_info', methods=['GET'])
+@limiter.limit(app.config['RATE_LIMIT'])
+def get_author_info_endpoint():
+    """根据session_id获取作者信息"""
+    # 获取session_id参数
+    session_id = request.form.get('session_id')
+    if not session_id:
+        return jsonify({"error": "缺少session_id参数"}), 400
+
+
+    try:
+        # 1. 从Redis获取文件元数据
+        file_metadata = redis_dao.get_file_metadata(session_id)
+        if not file_metadata:
+            return jsonify({"error": "找不到文件元数据，session_id可能已过期"}), 404
+
+        # 2. 从元数据中提取文件名（即书名）
+        filename = file_metadata.get('filename')
+        if not filename:
+            return jsonify({"error": "文件元数据中缺少文件名"}), 400
+
+        # 3. 从文件名中提取书名（去掉扩展名）
+        book_title = filename.rsplit('.', 1)[0] if '.' in filename else filename
+
+        # 4. 异步调用获取作者信息
+        async def async_wrapper():
+            return await get_author_info(book_title)
+
+        # 在同步环境中运行异步函数
+        author_info = asyncio.run(async_wrapper())
+
+        # 5. 处理可能的错误
+        if 'error' in author_info and author_info['error']:
+            return jsonify({
+                "error": "获取作者信息失败",
+                "details": author_info['error']
+            }), 500
+
+        # 6. 返回作者信息
+        return jsonify({
+            "session_id": session_id,
+            "book_title": book_title,
+            "author_info": author_info
+        })
+
+    except Exception as e:
+        return jsonify({"error": "服务器内部错误", "details": str(e)}), 500
+
+@app.route('/api/novel/store_author_info', methods=['POST'])
+@limiter.limit(app.config['RATE_LIMIT'])
+def store_author_info():
+    """
+    将作者信息存储到Redis的接口
+    请求体格式:
+    {
+      "session_id": "sess_abc123",
+      "book_title": "红楼梦",
+      "author_info": {
+        "作者姓名": "曹雪芹",
+        "生卒年份": "约1715年—约1763年",
+        "国籍": "中国",
+        "代表作": ["红楼梦", "废艺斋集稿", "南鹞北鸢考工志"],
+        "作者背景": "曹雪芹出身清代内务府正白旗包衣世家，是江宁织造曹寅之孙...",
+        "创作背景": "《红楼梦》创作于曹雪芹晚年贫困时期..."
+      }
+    }
+    """
+    try:
+        # 获取请求数据
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "请求体必须为JSON格式"}), 400
+
+        # 验证必要字段
+        required_fields = ["session_id", "book_title", "author_info"]
+        for field in required_fields:
+            if field not in data:
+                return jsonify({"error": f"缺少必要字段: {field}"}), 400
+
+        session_id = data["session_id"]
+        # book_title = data["book_title"]
+        author_info = data["author_info"]
+
+
+        # 获取Redis连接
+        conn = redis_dao.get_connection()
+
+        expire_seconds = int(app.config['SESSION_EXPIRE'].total_seconds())
+
+        # 存储作者信息内容（使用相同的过期时间）
+        conn.setex(
+            f"session:{session_id}:content",
+            expire_seconds,
+            json.dumps(author_info, ensure_ascii=False))
+
+        return jsonify({
+            "status": "success",
+            "session_id": session_id,
+            "expire_seconds": expire_seconds
+        })
+
+    except Exception as e:
+        return jsonify({
+            "error": "服务器内部错误",
+            "details": str(e)
+        }), 500
+
 
 @app.route('/api/session/<session_id>', methods=['GET'])
 @limiter.limit(app.config['RATE_LIMIT'])
@@ -283,4 +391,4 @@ def delete_session(session_id):
 
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(host='0.0.0.0', port=3000, debug=True)

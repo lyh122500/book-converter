@@ -14,3 +14,11 @@ class Config:
     MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB limit
     SESSION_EXPIRE = timedelta(hours=1)  # Session expiration time
     RATE_LIMIT = "5 per second"  # Default rate limit
+
+    from openai import AsyncOpenAI
+
+    # 全局 DeepSeek API 客户端
+    dsclient = AsyncOpenAI(
+        api_key="sk-d3c3323a507846189cb71d387be22988",
+        base_url="https://api.deepseek.com"
+    )

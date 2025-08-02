@@ -27,7 +27,8 @@ async def get_author_info(book_title: str) -> dict:
     try:
         # 构造提示词，包含明确的JSON格式示例
         prompt = f"""
-        请提供关于《{book_title}》这本书的详细作者信息，并严格按照以下JSON格式返回数据：
+        请提供关于《{book_title}》这本书的详细作者信息，请注意书名中可能含有除书名外的其他信息，请你自己确定书名
+        并严格按照以下JSON格式返回数据：
 
         {{
             "作者姓名": "作者全名",
