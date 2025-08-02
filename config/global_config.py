@@ -15,6 +15,14 @@ class Config:
     SESSION_EXPIRE = timedelta(hours=1)  # Session expiration time
     RATE_LIMIT = "5 per second"  # Default rate limit
 
+    from openai import AsyncOpenAI
+
+    # 全局 DeepSeek API 客户端
+    dsclient = AsyncOpenAI(
+        api_key="sk-d3c3323a507846189cb71d387be22988",
+        base_url="https://api.deepseek.com"
+    )
+
     @staticmethod
     def get_summary_prompt(word_count=1500):
         raw_prompt = f"""你是一个专业的文学总结助手，你将为以下文本生成精确总结，请严格遵循以下要求：
