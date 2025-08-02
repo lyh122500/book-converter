@@ -46,7 +46,7 @@ class RedisDao:
             'size': int
         }
         """
-        file_data =  self._conn.get(f"session:{session_id}:file")
+        file_data = self._conn.get(f"session:{session_id}:file")
         if not file_data:
             return None
         return json.loads(file_data)

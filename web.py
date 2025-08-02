@@ -1,4 +1,3 @@
-import asyncio
 import json
 import threading
 
@@ -7,47 +6,24 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 import os
 import time
-import uuid
-import redis
-from datetime import timedelta
 
 from config.global_config import Config
 from dao.redisDao import RedisDao
 from util.asyncSummarizer import AsyncTextSummarizer
 from util.author_configuration import get_author_info
+from dao.redisDao import RedisDao
+from util.Summarizer import Summarizer
 from util.preprocess import process_single_file
 
 app = Flask(__name__)
 app.config.from_object(Config)
 
-# 全局事件循环和锁
-event_loop = None
-loop_lock = threading.Lock()
-
-def create_event_loop():
-    """创建并设置新的事件循环"""
-    global event_loop
-    new_loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(new_loop)
-    event_loop = new_loop
-    return new_loop
-
-def get_event_loop():
-    """获取当前线程的事件循环，如果没有则创建"""
-    global event_loop
-    try:
-        return asyncio.get_event_loop()
-    except RuntimeError:
-        with loop_lock:
-            if event_loop is None:
-                return create_event_loop()
-            return event_loop
-
-
-get_event_loop()
 
 redis_dao = RedisDao()
 summarizer = AsyncTextSummarizer()
+
+redis_dao = RedisDao()
+summarizer = Summarizer()
 
 
 # Initialize rate limiter
@@ -204,11 +180,22 @@ def upload_file():
         return jsonify({'error': 'File upload failed'}), 500
 
 
+@app.route('/api/novel/raw_prompt', methods=['GET'])
+@limiter.limit(app.config['RATE_LIMIT'])
+def get_raw_prompt():
+    session_id = request.form.get('session_id')
+    word_count = request.form.get('word_count')
+    return jsonify({
+        'session_id': session_id,
+        'prompt': Config.get_summary_prompt(word_count)
+    }), 200
+
 @app.route('/api/novel/summarize', methods=['POST'])
 @limiter.limit(app.config['RATE_LIMIT'])
 def process_file():
     """处理文件（示例接口）"""
     session_id = request.form.get('session_id')
+    prompt = request.form.get('prompt')
     if not session_id:
         return jsonify({'error': 'session_id is required'}), 400
 
@@ -222,15 +209,8 @@ def process_file():
     target_length = int(request.form.get('target_length'))
     try:
         segments = process_single_file(session_id, redis_dao,  target_length)
-        # 获取当前线程的事件循环
-        current_loop = get_event_loop()
 
-        # 在当前事件循环中运行协程
-        future = asyncio.run_coroutine_threadsafe(
-            summarizer.summarize_segments(segments),
-            current_loop
-        )
-        summary = future.result(timeout=60)  # 60秒超时
+        summary = summarizer.process_segments(segments, prompt)  # 60秒超时
         r.setex(
             f"session:{session_id}:summary",
             int(app.config['SESSION_EXPIRE'].total_seconds()),
@@ -391,4 +371,4 @@ def delete_session(session_id):
 
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=3000, debug=True)
+    app.run(host='0.0.0.0', port=5000, debug=True)
