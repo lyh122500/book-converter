@@ -10,18 +10,15 @@ import time
 
 from config.global_config import Config
 from dao.redisDao import RedisDao
-from util.asyncSummarizer import AsyncTextSummarizer
 from util.author_configuration import get_author_info
 from dao.redisDao import RedisDao
 from util.Summarizer import Summarizer
+from util.make_prompt import generate_commentary_prompt
 from util.preprocess import process_single_file
 
 app = Flask(__name__)
 app.config.from_object(Config)
 
-
-redis_dao = RedisDao()
-summarizer = AsyncTextSummarizer()
 
 redis_dao = RedisDao()
 summarizer = Summarizer()
@@ -315,7 +312,7 @@ def store_author_info():
 
         # 存储作者信息内容（使用相同的过期时间）
         conn.setex(
-            f"session:{session_id}:content",
+            f"session:{session_id}:author",
             expire_seconds,
             json.dumps(author_info, ensure_ascii=False))
 
@@ -329,6 +326,196 @@ def store_author_info():
         return jsonify({
             "error": "服务器内部错误",
             "details": str(e)
+        }), 500
+
+
+@app.route('/api/novel/create_commentary', methods=['POST'])
+@limiter.limit(app.config['RATE_LIMIT'])
+def create_commentary():
+    """
+    生成名著解说词接口
+    请求格式:
+    {
+        "session_id": "当前会话ID",
+        "config": {
+            "解说词类型": "剧情解说|人物分析|主题解析...",
+            "语言风格": "幽默风趣|严谨学术...",
+            "目标受众": "小学生|中学生|大学生...",
+            "ex_prompt": "额外的自定义要求..."
+        }
+    }
+    """
+    # 获取请求数据
+    data = request.get_json()
+    if not data:
+        return jsonify({'error': 'Invalid JSON data'}), 400
+
+    session_id = data.get('session_id')
+    if not session_id:
+        return jsonify({'error': 'session_id is required'}), 400
+
+    config = data.get('config', {})
+    if not config:
+        return jsonify({'error': 'config is required'}), 400
+
+    # 会话级速率限制
+    if not check_rate_limit(session_id):
+        return jsonify({'error': 'Rate limit exceeded for this session'}), 429
+
+    r = redis_dao.get_connection()
+
+    try:
+        author_info_json = r.get(f"session:{session_id}:author")
+        summary = r.get(f"session:{session_id}:summary")
+        # 解析作者信息
+        author_info = json.loads(author_info_json)
+
+        # 2. 生成解说词prompt
+        commentary_prompt = generate_commentary_prompt(config)
+
+        # 3. 准备发送给DeepSeek的完整提示
+        author_background = (
+            f"作者姓名：{author_info.get('作者姓名', '未知')}\n"
+            f"生卒年份：{author_info.get('生卒年份', '不详')}\n"
+            f"国籍：{author_info.get('国籍', '未知')}\n"
+            f"代表作：{', '.join(author_info.get('代表作', []))}\n"
+            f"作者背景：{author_info.get('作者背景', '暂无信息')}\n"
+            f"创作背景：{author_info.get('创作背景', '暂无信息')}"
+        )
+
+        full_prompt = (
+            f"你是一位专业的文学评论家，请为以下作品生成解说词。\n\n"
+            f"=== 作者信息 ===\n{author_background}\n\n"
+            f"=== 作品内容摘要 ===\n{summary}\n\n"
+            f"=== 解说要求 ===\n{commentary_prompt}"
+        )
+
+        # 4. 调用DeepSeek API (同步调用)
+        client = config.dsclient
+
+        response = client.chat.completions.create(
+            model="deepseek-chat",
+            messages=[
+                {"role": "system", "content": "你是一位专业的文学评论家"},
+                {"role": "user", "content": full_prompt}
+            ],
+            temperature=0.7,
+            max_tokens=2000
+        )
+
+        commentary = response.choices[0].message.content
+
+        # 更新会话元数据
+        r.hset(f"session:{session_id}:meta", 'last_active', time.time())
+        r.hset(f"session:{session_id}:meta", 'has_commentary', 1)
+
+        return jsonify({
+            'session_id': session_id,
+            'commentary': commentary,
+            'message': 'Commentary generated successfully'
+        }), 200
+
+    except Exception as e:
+        app.logger.error(f"生成解说词失败: {str(e)}")
+        return jsonify({
+            'error': 'Failed to generate commentary',
+            'details': str(e)
+        }), 500
+
+
+@app.route('/api/novel/update_commentary', methods=['POST'])
+@limiter.limit(app.config['RATE_LIMIT'])
+def update_commentary():
+    """
+    更新解说词接口
+    请求格式:
+    {
+        "session_id": "当前会话ID",
+        "commentary": "用户修改后的解说词内容",
+        "edit_notes": "用户修改说明(可选)"
+    }
+    """
+    # 获取请求数据
+    data = request.get_json()
+    if not data:
+        return jsonify({'error': 'Invalid JSON data'}), 400
+
+    session_id = data.get('session_id')
+    if not session_id:
+        return jsonify({'error': 'session_id is required'}), 400
+
+    new_commentary = data.get('commentary')
+    if not new_commentary:
+        return jsonify({'error': 'commentary content is required'}), 400
+
+    # 会话级速率限制
+    if not check_rate_limit(session_id):
+        return jsonify({'error': 'Rate limit exceeded for this session'}), 429
+
+    r = redis_dao.get_connection()
+
+    try:
+        # 检查会话是否存在
+        if not r.exists(f"session:{session_id}:meta"):
+            return jsonify({'error': 'Session not found or expired'}), 404
+
+        # 获取原始解说词(如果存在)
+        original_commentary = r.get(f"session:{session_id}:commentary")
+
+        # 存储用户修改后的解说词
+        commentary_data = {
+            "content": new_commentary,
+            "last_modified": time.time(),
+            "is_user_modified": True,
+            "edit_notes": data.get('edit_notes', '')
+        }
+
+        # 如果有原始解说词，保存修改历史
+        if original_commentary:
+            # 获取或初始化修改历史
+            history = r.get(f"session:{session_id}:commentary_history")
+            history = json.loads(history) if history else []
+
+            # 添加历史记录
+            history.append({
+                "timestamp": time.time(),
+                "content": original_commentary,
+                "type": "original" if len(history) == 0 else "modified"
+            })
+
+            # 保存历史(最多保留5个版本)
+            if len(history) > 5:
+                history = history[-5:]
+
+            r.setex(
+                f"session:{session_id}:commentary",
+                int(app.config['SESSION_EXPIRE'].total_seconds()),
+                json.dumps(history, ensure_ascii=False)
+            )
+
+            commentary_data['original_content'] = original_commentary
+
+        # 保存新解说词
+        r.setex(
+            f"session:{session_id}:commentary",
+            int(app.config['SESSION_EXPIRE'].total_seconds()),
+            json.dumps(commentary_data, ensure_ascii=False)
+        )
+
+        # 更新会话元数据
+        r.hset(f"session:{session_id}:meta", 'last_active', time.time())
+        r.hset(f"session:{session_id}:meta", 'is_edited', 1)
+
+        return jsonify({
+            'session_id': session_id,
+            'message': 'Commentary updated successfully',
+        }), 200
+
+    except Exception as e:
+        app.logger.error(f"更新解说词失败: {str(e)}")
+        return jsonify({
+            'error': 'Failed to update commentary',
+            'details': str(e)
         }), 500
 
 
