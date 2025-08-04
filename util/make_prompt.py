@@ -1,5 +1,28 @@
 import random
 
+from config.global_config import Config
+
+
+async def generate_new_commentary(commentary, requirement):
+    """使用DeepSeek模型生成新的解说词"""
+    system_prompt = (
+        "生成新的解说词。直接输出新的解说词内容，不需要额外的解释或标记。"
+    )
+
+    user_prompt = f"### 现有解说词:\n{commentary}\n\n### 修改要求:\n{requirement}"
+
+    response = await Config.dsclient.chat.completions.create(
+        model="deepseek-chat",
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ],
+        max_tokens=8000,
+        stream=False
+    )
+
+    return response.choices[0].message.content.strip()
+
 
 def generate_commentary_prompt(config: dict) -> str:
     """

@@ -13,7 +13,7 @@ from dao.redisDao import RedisDao
 from util.author_configuration import get_author_info
 from dao.redisDao import RedisDao
 from util.Summarizer import Summarizer
-from util.make_prompt import generate_commentary_prompt
+from util.make_prompt import generate_commentary_prompt, generate_new_commentary
 from util.preprocess import process_single_file
 
 app = Flask(__name__)
@@ -383,11 +383,11 @@ def create_commentary():
         )
 
         full_prompt = (
-            f"你是一位专业的文学评论家，请为以下作品生成解说词。\n\n"
             f"=== 作者信息 ===\n{author_background}\n\n"
             f"=== 作品内容摘要 ===\n{summary}\n\n"
             f"=== 解说要求 ===\n{commentary_prompt}\n"
-            "注意只输出解说词即可，不要任何额外输出"
+            "保证中间正文是完整的剧情讲解，且解说词数量不少于一万字\n"
+            "注意只输出解说词即可，不要任何额外输出\n"
         )
         print(full_prompt)
 
@@ -398,11 +398,11 @@ def create_commentary():
             response = await client.chat.completions.create(
                 model="deepseek-chat",
                 messages=[
-                    {"role": "system", "content": "你是一位专业的文学评论家，请根据下面的信息为作品生成解说词。\n\n"},
+                    {"role": "system", "content": "你是一位专业的文学评论家，请根据提供的信息为作品生成解说词。\n\n"},
                     {"role": "user", "content": full_prompt}
                 ],
                 temperature=0.7,
-                max_tokens=2000
+                max_tokens=8000
             )
             return response.choices[0].message.content
 
@@ -424,6 +424,35 @@ def create_commentary():
         return jsonify({
             'error': 'Failed to generate commentary',
             'details': str(e)
+        }), 500
+
+
+@app.route('/api/novel/remake_commentary', methods=['POST'])
+@limiter.limit(app.config['RATE_LIMIT'])
+async def remake_commentary():
+    """根据现有解说词和需求生成新的解说词"""
+    # 获取请求参数
+    commentary = request.form.get('commentary', '')
+    requirement = request.form.get('requirement', '')
+
+    # 验证必要参数
+    if not commentary and not requirement:
+        return jsonify({"error": "至少需要提供解说词或修改要求"}), 400
+
+    try:
+        # 调用DeepSeek API生成新的解说词
+        new_commentary = asyncio.run(generate_new_commentary(commentary, requirement))
+        return jsonify({
+            "commentary": new_commentary,
+            "status": "success",
+            "model": "deepseek-chat"
+        })
+
+    except Exception as e:
+        app.logger.error(f"解说词生成失败: {str(e)}")
+        return jsonify({
+            "error": "解说词生成失败",
+            "details": str(e)
         }), 500
 
 
