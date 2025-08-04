@@ -387,7 +387,8 @@ def create_commentary():
             f"你是一位专业的文学评论家，请为以下作品生成解说词。\n\n"
             f"=== 作者信息 ===\n{author_background}\n\n"
             f"=== 作品内容摘要 ===\n{summary}\n\n"
-            f"=== 解说要求 ===\n{commentary_prompt}"
+            f"=== 解说要求 ===\n{commentary_prompt}\n"
+            "注意只输出解说词即可，不要任何额外输出"
         )
 
         # 4. 调用DeepSeek API (同步调用)
@@ -431,8 +432,7 @@ def update_commentary():
     请求格式:
     {
         "session_id": "当前会话ID",
-        "commentary": "用户修改后的解说词内容",
-        "edit_notes": "用户修改说明(可选)"
+        "9": "用户修改后的解说词内容",
     }
     """
     # 获取请求数据
@@ -459,47 +459,11 @@ def update_commentary():
         if not r.exists(f"session:{session_id}:meta"):
             return jsonify({'error': 'Session not found or expired'}), 404
 
-        # 获取原始解说词(如果存在)
-        original_commentary = r.get(f"session:{session_id}:commentary")
-
-        # 存储用户修改后的解说词
-        commentary_data = {
-            "content": new_commentary,
-            "last_modified": time.time(),
-            "is_user_modified": True,
-            "edit_notes": data.get('edit_notes', '')
-        }
-
-        # 如果有原始解说词，保存修改历史
-        if original_commentary:
-            # 获取或初始化修改历史
-            history = r.get(f"session:{session_id}:commentary_history")
-            history = json.loads(history) if history else []
-
-            # 添加历史记录
-            history.append({
-                "timestamp": time.time(),
-                "content": original_commentary,
-                "type": "original" if len(history) == 0 else "modified"
-            })
-
-            # 保存历史(最多保留5个版本)
-            if len(history) > 5:
-                history = history[-5:]
-
-            r.setex(
-                f"session:{session_id}:commentary",
-                int(app.config['SESSION_EXPIRE'].total_seconds()),
-                json.dumps(history, ensure_ascii=False)
-            )
-
-            commentary_data['original_content'] = original_commentary
-
         # 保存新解说词
         r.setex(
             f"session:{session_id}:commentary",
             int(app.config['SESSION_EXPIRE'].total_seconds()),
-            json.dumps(commentary_data, ensure_ascii=False)
+            new_commentary
         )
 
         # 更新会话元数据
