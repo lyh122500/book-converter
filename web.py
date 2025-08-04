@@ -19,10 +19,8 @@ from util.preprocess import process_single_file
 app = Flask(__name__)
 app.config.from_object(Config)
 
-
 redis_dao = RedisDao()
 summarizer = Summarizer()
-
 
 # Initialize rate limiter
 limiter = Limiter(
@@ -188,6 +186,7 @@ def get_raw_prompt():
         'prompt': Config.get_summary_prompt(word_count)
     }), 200
 
+
 @app.route('/api/novel/summarize', methods=['POST'])
 @limiter.limit(app.config['RATE_LIMIT'])
 def process_file():
@@ -206,7 +205,7 @@ def process_file():
         return jsonify({'error': 'Invalid or expired session_id'}), 404
     target_length = int(request.form.get('target_length'))
     try:
-        segments = process_single_file(session_id, redis_dao,  target_length)
+        segments = process_single_file(session_id, redis_dao, target_length)
 
         summary = summarizer.process_segments(segments, prompt)  # 60秒超时
         r.setex(
@@ -221,6 +220,7 @@ def process_file():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+
 @app.route('/api/novel/get_author_info', methods=['GET'])
 @limiter.limit(app.config['RATE_LIMIT'])
 def get_author_info_endpoint():
@@ -229,7 +229,6 @@ def get_author_info_endpoint():
     session_id = request.form.get('session_id')
     if not session_id:
         return jsonify({"error": "缺少session_id参数"}), 400
-
 
     try:
         # 1. 从Redis获取文件元数据
@@ -269,6 +268,7 @@ def get_author_info_endpoint():
     except Exception as e:
         return jsonify({"error": "服务器内部错误", "details": str(e)}), 500
 
+
 @app.route('/api/novel/store_author_info', methods=['POST'])
 @limiter.limit(app.config['RATE_LIMIT'])
 def store_author_info():
@@ -303,7 +303,6 @@ def store_author_info():
         session_id = data["session_id"]
         # book_title = data["book_title"]
         author_info = data["author_info"]
-
 
         # 获取Redis连接
         conn = redis_dao.get_connection()
@@ -390,21 +389,25 @@ def create_commentary():
             f"=== 解说要求 ===\n{commentary_prompt}\n"
             "注意只输出解说词即可，不要任何额外输出"
         )
+        print(full_prompt)
 
         # 4. 调用DeepSeek API (同步调用)
-        client = config.dsclient
+        client = Config.dsclient
 
-        response = client.chat.completions.create(
-            model="deepseek-chat",
-            messages=[
-                {"role": "system", "content": "你是一位专业的文学评论家"},
-                {"role": "user", "content": full_prompt}
-            ],
-            temperature=0.7,
-            max_tokens=2000
-        )
+        async def async_wrapper():
+            response = await client.chat.completions.create(
+                model="deepseek-chat",
+                messages=[
+                    {"role": "system", "content": "你是一位专业的文学评论家，请根据下面的信息为作品生成解说词。\n\n"},
+                    {"role": "user", "content": full_prompt}
+                ],
+                temperature=0.7,
+                max_tokens=2000
+            )
+            return response.choices[0].message.content
 
-        commentary = response.choices[0].message.content
+        # 在同步环境中运行异步函数
+        commentary = asyncio.run(async_wrapper())
 
         # 更新会话元数据
         r.hset(f"session:{session_id}:meta", 'last_active', time.time())
@@ -424,7 +427,7 @@ def create_commentary():
         }), 500
 
 
-@app.route('/api/novel/update_commentary', methods=['POST'])
+@app.route('/api/novel/post_commentary', methods=['POST'])
 @limiter.limit(app.config['RATE_LIMIT'])
 def update_commentary():
     """
