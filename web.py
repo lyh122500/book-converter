@@ -386,7 +386,8 @@ def create_commentary():
             f"=== 作者信息 ===\n{author_background}\n\n"
             f"=== 作品内容摘要 ===\n{summary}\n\n"
             f"=== 解说要求 ===\n{commentary_prompt}\n"
-            "保证中间正文是完整的剧情讲解，且解说词数量不少于一万字\n"
+            "根据内容分段返回解说词，每个分段会用于制作十秒的视频\n"
+            "中间正文是剧情讲解，且解说词数量不少于一万字\n"
             "注意只输出解说词即可，不要任何额外输出\n"
         )
         print(full_prompt)
@@ -396,13 +397,13 @@ def create_commentary():
 
         async def async_wrapper():
             response = await client.chat.completions.create(
-                model="deepseek-chat",
+                model="deepseek-reasoner",
                 messages=[
                     {"role": "system", "content": "你是一位专业的文学评论家，请根据提供的信息为作品生成解说词。\n\n"},
                     {"role": "user", "content": full_prompt}
                 ],
                 temperature=0.7,
-                max_tokens=8000
+                max_tokens=30000
             )
             return response.choices[0].message.content
 
@@ -557,4 +558,4 @@ def delete_session(session_id):
 
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=3000, debug=True)
+    app.run(host='0.0.0.0', port=5000, debug=True)
