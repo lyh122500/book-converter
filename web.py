@@ -429,19 +429,21 @@ def create_commentary():
 
 @app.route('/api/novel/remake_commentary', methods=['POST'])
 @limiter.limit(app.config['RATE_LIMIT'])
-async def remake_commentary():
+def remake_commentary():
     """根据现有解说词和需求生成新的解说词"""
     # 获取请求参数
     commentary = request.form.get('commentary', '')
     requirement = request.form.get('requirement', '')
 
+    async def async_wrapper():
+        return await generate_new_commentary(commentary, requirement)
     # 验证必要参数
     if not commentary and not requirement:
         return jsonify({"error": "至少需要提供解说词或修改要求"}), 400
 
     try:
         # 调用DeepSeek API生成新的解说词
-        new_commentary = asyncio.run(generate_new_commentary(commentary, requirement))
+        new_commentary = asyncio.run(async_wrapper())
         return jsonify({
             "commentary": new_commentary,
             "status": "success",
@@ -555,4 +557,4 @@ def delete_session(session_id):
 
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(host='0.0.0.0', port=3000, debug=True)
