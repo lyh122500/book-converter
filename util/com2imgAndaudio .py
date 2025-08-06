@@ -12,6 +12,7 @@ from typing import List, Tuple
 from flask import current_app
 
 from config.global_config import Config
+from util.picture_process import create_image_based_video
 
 
 def process_commentary(commentary: str) -> Tuple[List[str], List[bytes], List[bytes]]:
@@ -127,28 +128,40 @@ def _generate_and_download_audio(text: str) -> bytes:
         raise
 
 
+from typing import List, Tuple
+import os
+from datetime import datetime
+
 def save_and_return_results(
         sentences: List[str],
         images: List[bytes],
         audios: List[bytes],
         output_dir: str = "output"
-) -> Tuple[List[str], List[str], List[str]]:
+) -> Tuple[str, List[List[str]]]:
     """
-    保存结果到本地并返回文件路径
-    返回: (文本列表, 图片路径列表, 音频路径列表)
+    保存结果到本地并返回文件路径和双层链表结构
+    返回: (保存目录路径, 双层链表[
+        [文本路径1, 图片路径1, 音频路径1],
+        [文本路径2, 图片路径2, 音频路径2],
+        ...
+    ])
     """
     # 1. 创建输出目录（按时间戳命名）
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     save_dir = os.path.join(output_dir, f"result_{timestamp}")
     os.makedirs(save_dir, exist_ok=True)
 
+    # 初始化双层链表结构
+    result_linked_list = []
+
     # 2. 保存文本文件
     text_paths = []
     with open(os.path.join(save_dir, "full_text.txt"), "w", encoding="utf-8") as f:
         for i, sentence in enumerate(sentences):
             f.write(f"Segment {i + 1}: {sentence}\n\n")
-            text_paths.append(os.path.join(save_dir, f"text_{i + 1}.txt"))
-            with open(text_paths[-1], "w", encoding="utf-8") as seg_f:
+            text_path = os.path.join(save_dir, f"text_{i + 1}.txt")
+            text_paths.append(text_path)
+            with open(text_path, "w", encoding="utf-8") as seg_f:
                 seg_f.write(sentence)
 
     # 3. 保存图片（确保是bytes）
@@ -184,8 +197,20 @@ def save_and_return_results(
             print(f"⚠️ 音频{i + 1}数据无效（类型：{type(audio_data)}）")
             audio_paths.append("")
 
+    # 构建双层链表结构
+    for i in range(len(sentences)):
+        # 每个分镜对应一个包含三个路径的列表
+        scene_data = [
+            text_paths[i] if i < len(text_paths) else "",
+            image_paths[i] if i < len(image_paths) else "",
+            audio_paths[i] if i < len(audio_paths) else ""
+        ]
+        result_linked_list.append(scene_data)
+
     print(f"✅ 结果已保存到目录: {save_dir}")
-    return sentences, image_paths, audio_paths
+    return save_dir, result_linked_list
+
 
 if __name__ == "__main__":
-    process_commentary("福贵的命运像一把钝刀，缓缓割开心灵的茧，让我在深夜的宿舍里久久不能平静。")
+    save, path = process_commentary("初次翻开余华的《活着》，一股沉重的悲凉便扑面而来。福贵的命运像一把钝刀，缓缓割开心灵的茧，让我在深夜的宿舍里久久不能平静。这部小说，作为中国当代文学的里程碑，不仅以冷峻的笔触刻画出生命的荒诞与坚韧，更在全球文坛上树立了不朽的典范——它让我们在个体的悲剧中，窥见一个民族的历史伤痕。")
+    dir = create_image_based_video(path,output_file="final_video.mp4",resolution=(1280, 720),fps=25)
