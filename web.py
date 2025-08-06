@@ -1,8 +1,9 @@
 import asyncio
 import json
+import shutil
 import threading
 
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_file
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 import os
@@ -13,8 +14,11 @@ from dao.redisDao import RedisDao
 from util.author_configuration import get_author_info
 from dao.redisDao import RedisDao
 from util.Summarizer import Summarizer
+from util.com2imgAndaudio import process_commentary
 from util.make_prompt import generate_commentary_prompt, generate_new_commentary
+from util.picture_process import create_image_based_video
 from util.preprocess import process_single_file
+
 
 app = Flask(__name__)
 app.config.from_object(Config)
@@ -518,7 +522,90 @@ def update_commentary():
         }), 500
 
 
+@app.route('/api/novel/create_video', methods=['POST'])
+@limiter.limit(app.config['RATE_LIMIT'])
+def generate_video():
+    """
+    生成解说视频接口
+    请求格式:
+    {
+        "session_id": "会话ID",
+        "解说语种": "中文",
+        "解说声音": "zh_female_yuanqinvyou_moon_bigtts",
+        "视频风格": "卡通",
+        "背景音乐": "轻松"
+    }
+    """
+    # 获取请求数据
+    data = request.get_json()
+    if not data:
+        return jsonify({'error': 'Invalid JSON data'}), 400
 
+    session_id = data.get('session_id')
+    if not session_id:
+        return jsonify({'error': 'session_id is required'}), 400
+
+    # 会话级速率限制
+    if not check_rate_limit(session_id):
+        return jsonify({'error': 'Rate limit exceeded for this session'}), 429
+
+    r = redis_dao.get_connection()
+    try:
+        # 1. 从Redis获取解说词
+        commentary_data = r.get(f"session:{session_id}:commentary")
+        if not commentary_data:
+            return jsonify({'error': 'No commentary found for this session'}), 404
+
+        # 解析解说词内容
+        commentary = json.loads(commentary_data).get('content')
+        if not commentary:
+            return jsonify({'error': 'Empty commentary content'}), 400
+        save_path = ""
+        try:
+            # 3. 处理解说词生成音频和素材
+            voice_type = data.get('解说声音', "zh_male_jieshuoxiaoming_moon_bigtts")
+            video_type = data.get('视频风格', "写实风格")
+            save_path, elements = process_commentary(commentary,video_type, voice_type)
+
+            # 4. 生成视频
+            output_file = os.path.join(save_path, "final_video.mp4")
+            video_path = create_image_based_video(
+                segments=elements,
+                output_file=output_file,
+                resolution=(1280, 720),
+                fps=25,
+            )
+
+            # 5. 返回生成的视频文件
+            response = send_file(
+                video_path,
+                mimetype='video/mp4',
+                as_attachment=True,
+                download_name=f"commentary_{session_id}.mp4"
+            )
+
+            # 6. 添加自定义头部信息
+            response.headers['X-Session-ID'] = session_id
+            response.headers['X-Video-Size'] = os.path.getsize(video_path)
+
+            return response
+
+        finally:
+            # 7. 清理临时文件
+            try:
+                if os.path.exists(save_path):
+                    shutil.rmtree(save_path)
+            except Exception as cleanup_error:
+                app.logger.error(f"清理临时文件失败: {str(cleanup_error)}")
+
+    except json.JSONDecodeError:
+        return jsonify({'error': 'Failed to parse commentary data'}), 500
+    except Exception as e:
+        app.logger.error(f"生成视频失败: {str(e)}")
+        return jsonify({
+            'error': 'Failed to generate video',
+            'details': str(e)
+        }), 500
 
 
 @app.route('/api/session/<session_id>', methods=['GET'])

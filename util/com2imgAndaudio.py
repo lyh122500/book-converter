@@ -15,13 +15,13 @@ from config.global_config import Config
 from util.picture_process import create_image_based_video
 
 
-def process_commentary(commentary: str) -> Tuple[List[str], List[bytes], List[bytes]]:
+def process_commentary(commentary: str, video_type: str, voice_type: str) -> Tuple[List[str], List[bytes], List[bytes]]:
     """
     处理解说词并返回: (分段文本, 图片二进制数组, 音频二进制数组)
     """
     # 1. 分段处理（保留句号）
-    raw_sentences = re.split(r'(?<=[。？！])', commentary.strip())
-    sentences = [s for s in raw_sentences if s.strip()]
+    raw_sentences = re.split(r'(?<=[。？！.?!])', commentary.strip())
+    sentences = [s for s+f"[{video_type}]" in raw_sentences if s.strip()]
     # 2. 线程池配置（建议根据API限制调整max_workers）
     with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
         # 3. 提交所有任务
@@ -30,7 +30,7 @@ def process_commentary(commentary: str) -> Tuple[List[str], List[bytes], List[by
             # 图片任务
             future_to_index[executor.submit(_generate_and_download_image, sentence)] = (idx, 'image')
             # 音频任务
-            future_to_index[executor.submit(_generate_and_download_audio, sentence)] = (idx, 'audio')
+            future_to_index[executor.submit(_generate_and_download_audio, sentence, voice_type)] = (idx, 'audio')
 
         # 4. 初始化结果容器
         image_data = [None] * len(sentences)
@@ -89,7 +89,7 @@ def _generate_and_download_image(prompt: str, max_retries: int = 2) -> bytes:
     raise Exception(f"图片生成失败（重试{retry_count}次）: {str(last_error)}")
 
 
-def _generate_and_download_audio(text: str) -> bytes:
+def _generate_and_download_audio(text: str,  voice_type: str) -> bytes:
     """生成并下载语音（返回二进制MP3）"""
     try:
         # 1. 获取音频URL
@@ -101,7 +101,7 @@ def _generate_and_download_audio(text: str) -> bytes:
             },
             "user": {"uid": str(uuid.uuid4())},
             "audio": {
-                "voice_type": "zh_male_jieshuoxiaoming_moon_bigtts",
+                "voice_type": voice_type,
                 "encoding": "mp3",
             },
             "request": {
@@ -126,11 +126,6 @@ def _generate_and_download_audio(text: str) -> bytes:
     except Exception as e:
         print(f"语音下载失败: {e}")
         raise
-
-
-from typing import List, Tuple
-import os
-from datetime import datetime
 
 def save_and_return_results(
         sentences: List[str],
