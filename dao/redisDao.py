@@ -33,6 +33,7 @@ class RedisDao:
             f"session:{session_id}:summary",
             f"session:{session_id}:meta",
             f"session:{session_id}:content",
+            f"session:{session_id}:poetry",
             f"ratelimit:{session_id}"
         ]
         self._conn.delete(*keys)

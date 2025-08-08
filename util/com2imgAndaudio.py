@@ -15,13 +15,13 @@ from config.global_config import Config
 from util.picture_process import create_image_based_video
 
 
-def process_commentary(commentary: str, video_type: str, voice_type: str) -> Tuple[List[str], List[bytes], List[bytes]]:
+def process_commentary(commentary: str, video_type: str, voice_type: str, resolution=(1920, 1080)) -> Tuple[List[str], List[bytes], List[bytes]]:
     """
     处理解说词并返回: (分段文本, 图片二进制数组, 音频二进制数组)
     """
     # 1. 分段处理（保留句号）
     raw_sentences = re.split(r'(?<=[。？！.?!])', commentary.strip())
-    sentences = [s for s+f"[{video_type}]" in raw_sentences if s.strip()]
+    sentences = [s + f"[{video_type}]" for s in raw_sentences if s.strip()]
     # 2. 线程池配置（建议根据API限制调整max_workers）
     with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
         # 3. 提交所有任务
@@ -56,18 +56,18 @@ def process_commentary(commentary: str, video_type: str, voice_type: str) -> Tup
     return save_and_return_results(sentences, image_data, audio_data)
 
 
-def _generate_and_download_image(prompt: str, max_retries: int = 2) -> bytes:
+def _generate_and_download_image(prompt: str, max_retries: int = 2,resolution=(1920, 1080)) -> bytes:
     """生成并下载图片（自动重试敏感内容错误）"""
     retry_count = 0
     last_error = None
-
+    size = str(resolution[0])+str(resolution[1])
     while retry_count <= max_retries:
         try:
             # 1. 生成图片URL（添加安全提示）
             response = Config.seeDreamClient.images.generate(
                 model="doubao-seedream-3-0-t2i-250415",
                 prompt=f"安全合规的图片，无敏感内容。{prompt}",
-                size="1280x720",
+                size=size,
             )
 
             # 2. 下载图片
