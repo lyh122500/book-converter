@@ -727,74 +727,151 @@ def create_poetry_commentary():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/poetry/remake_commentary', methods=['POST'])
+@limiter.limit(app.config['RATE_LIMIT'])
+def remake_commentary():
+    """根据现有解说词和需求生成新的解说词"""
+    # 获取请求参数
+    commentary = request.form.get('commentary', '')
+    requirement = request.form.get('requirement', '')
+
+    async def async_wrapper():
+        return await generate_new_commentary(commentary, requirement)
+
+    # 验证必要参数
+    if not commentary and not requirement:
+        return jsonify({"error": "至少需要提供解说词或修改要求"}), 400
+
+    try:
+        # 调用DeepSeek API生成新的解说词
+        new_commentary = asyncio.run(async_wrapper())
+        return jsonify({
+            "commentary": new_commentary,
+            "status": "success",
+            "model": "deepseek-chat"
+        })
+
+    except Exception as e:
+        app.logger.error(f"解说词生成失败: {str(e)}")
+        return jsonify({
+            "error": "解说词生成失败",
+            "details": str(e)
+        }), 500
+
+
+
 @app.route('/api/poetry/create_video', methods=['POST'])
 @limiter.limit(app.config['RATE_LIMIT'])
-def create_poetry_video():
-    """生成诗歌解说视频"""
+def generate_poetry_video():
+    """
+    生成解说视频接口
+    请求格式:
+    {
+        "session_id": "会话ID",
+        "解说语种": "中文",
+        "解说声音": "zh_female_yuanqinvyou_moon_bigtts",
+        "视频风格": "卡通",
+        "resolution_x": 1280,
+        "resolution_y": 720
+    }
+    文件上传:
+    - background_music: 背景音乐文件
+    """
+    # 获取请求数据
+    data = request.form.to_dict()
+    if not data:
+        return jsonify({'error': 'Invalid data'}), 400
+
+    session_id = data.get('session_id')
+    if not session_id:
+        return jsonify({'error': 'session_id is required'}), 400
+    commentary = data.get('commentary')
+    if not commentary:
+        return jsonify({'error': 'commentary is required'}), 400
+
+    # 会话级速率限制
+    if not check_rate_limit(session_id):
+        return jsonify({'error': 'Rate limit exceeded for this session'}), 429
+
+    # 获取背景音乐文件
+    bg_music_file = request.files.get('background_music')
+    bg_music_path = None
+
+    r = redis_dao.get_connection()
     try:
-        data = request.get_json()
-        session_id = data.get('session_id')
-        commentary = data.get('commentary')
-        video_config = data.get('video_config', {})
+        # 处理背景音乐文件
+        if bg_music_file:
+            # 创建临时目录
+            temp_dir = tempfile.mkdtemp()
+            bg_music_path = os.path.join(temp_dir, "background_music.mp3")
+            bg_music_file.save(bg_music_path)
 
-        if not all([session_id, commentary]):
-            return jsonify({'error': 'session_id and commentary are required'}), 400
-
-        # 会话级速率限制
-        if not check_rate_limit(session_id):
-            return jsonify({'error': 'Rate limit exceeded for this session'}), 429
-
-        # 处理视频配置
-        voice_type = video_config.get('voice_type', 'zh_female_poetic_moon_bigtts')
-        style = video_config.get('style', '水墨风格')
-        bgm = video_config.get('bgm', '古典')
-
-        # 创建临时目录
-        temp_dir = os.path.join(app.config['UPLOAD_FOLDER'], f"temp_poetry_{session_id}")
-        os.makedirs(temp_dir, exist_ok=True)
-
+        save_path = ""
         try:
-            # 处理解说词生成素材
+            # 3. 处理解说词生成音频和素材
+            voice_type = data.get('解说声音', "zh_male_jieshuoxiaoming_moon_bigtts")
+            video_type = data.get('视频风格', "写实风格")
+
+            # 获取分辨率，默认1280x720
+            resolution_x = int(data.get('resolution_x', 1280))
+            resolution_y = int(data.get('resolution_y', 720))
+
             save_path, elements = process_commentary(
                 commentary,
-                video_type=style,
-                voice_type=voice_type,
-                bgm_type=bgm
+                video_type,
+                voice_type,
+                resolution=(resolution_x, resolution_y)
             )
 
-            # 生成视频
-            output_file = os.path.join(temp_dir, "poetry_video.mp4")
+            # 4. 生成视频
+            output_file = os.path.join(save_path, "final_video.mp4")
             video_path = create_image_based_video(
                 segments=elements,
                 output_file=output_file,
-                resolution=(1280, 720),
+                resolution=(resolution_x, resolution_y),
                 fps=25,
+                bg_music_path=bg_music_path
             )
 
-            # 返回视频文件
+            # 5. 返回生成的视频文件
             response = send_file(
                 video_path,
                 mimetype='video/mp4',
-                as_attachment=True,
-                download_name=f"poetry_{session_id}.mp4"
+                as_attachment=False,
+                download_name=f"commentary_{session_id}.mp4"
             )
 
+            # 6. 添加自定义头部信息
             response.headers['X-Session-ID'] = session_id
             response.headers['X-Video-Size'] = os.path.getsize(video_path)
+            response.headers['X-Resolution'] = f"{resolution_x}x{resolution_y}"
 
             return response
 
         finally:
-            # 清理临时文件
+            # 7. 清理临时文件
             try:
-                if os.path.exists(temp_dir):
-                    shutil.rmtree(temp_dir)
-            except Exception as e:
-                app.logger.error(f"Cleanup error: {str(e)}")
+                if os.path.exists(save_path):
+                    shutil.rmtree(save_path)
+                if bg_music_path and os.path.exists(bg_music_path):
+                    os.remove(bg_music_path)
+                    # Remove the temp directory if empty
+                    temp_dir = os.path.dirname(bg_music_path)
+                    if os.path.exists(temp_dir) and not os.listdir(temp_dir):
+                        os.rmdir(temp_dir)
+            except Exception as cleanup_error:
+                app.logger.error(f"清理临时文件失败: {str(cleanup_error)}")
 
+    except json.JSONDecodeError:
+        return jsonify({'error': 'Failed to parse commentary data'}), 500
+    except ValueError as ve:
+        return jsonify({'error': f'Invalid resolution value: {str(ve)}'}), 400
     except Exception as e:
-        app.logger.error(f"Video generation error: {str(e)}")
-        return jsonify({'error': str(e)}), 500
+        app.logger.error(f"生成视频失败: {str(e)}")
+        return jsonify({
+            'error': 'Failed to generate video',
+            'details': str(e)
+        }), 500
 
 
 @app.route('/api/session/<session_id>', methods=['GET'])
