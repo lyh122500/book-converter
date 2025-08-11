@@ -561,14 +561,9 @@ def generate_video():
     r = redis_dao.get_connection()
     try:
         # 1. 从Redis获取解说词
-        commentary_data = r.get(f"session:{session_id}:commentary")
-        if not commentary_data:
-            return jsonify({'error': 'No commentary found for this session'}), 404
-
-        # 解析解说词内容
-        commentary = json.loads(commentary_data).get('content')
+        commentary = r.get(f"session:{session_id}:commentary")
         if not commentary:
-            return jsonify({'error': 'Empty commentary content'}), 400
+            return jsonify({'error': 'No commentary found for this session'}), 404
 
         # 处理背景音乐文件
         if bg_music_file:
@@ -669,10 +664,10 @@ def upload_poetry():
         )
 
         # 获取作者信息
-        async def get_author_info_async():
-            return await get_poetry_author_info(poetry)
+        async def get_author_info_async(insPoetry):
+            return await get_poetry_author_info(insPoetry)
 
-        author_info = asyncio.run(get_author_info_async())
+        author_info = asyncio.run(get_author_info_async(poetry))
 
         # 获取诗歌翻译
         async def poeTranslate(text):
@@ -708,7 +703,7 @@ def create_poetry_commentary():
         data = request.get_json()
         session_id = data.get('session_id')
         trans_poetry = data.get('trans_poetry')
-        author_info = data.get('author_info')
+        author_info = data.get('author_info', {})
         commentary = data.get('video_config', {})
         if not all([session_id, trans_poetry, author_info]):
             return jsonify({'error': 'session_id, trans_poetry and author_info are required'}), 400
