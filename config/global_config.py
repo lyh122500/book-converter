@@ -25,6 +25,12 @@ class Config:
         base_url="https://api.deepseek.com"
     )
 
+    image2videoClient = AsyncOpenAI(
+        api_key="sk-0HuumZaRs4mnYUW_ZjW_y1mCPOvTp1LkU45bJbqsJ1I",
+        base_url="https://zhenze-huhehaote.cmecloud.cn/v1/video/generate"
+    )
+
+
     seeDreamClient = OpenAI(
         # 此为默认路径，您可根据业务所在地域进行配置
         base_url="https://ark.cn-beijing.volces.com/api/v3",

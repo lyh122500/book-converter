@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import json
 import shutil
 import tempfile
@@ -524,24 +525,372 @@ def update_commentary():
         }), 500
 
 
-@app.route('/api/novel/create_video', methods=['POST'])
+@app.route('/api/novel/generate_assets', methods=['POST'])
 @limiter.limit(app.config['RATE_LIMIT'])
-def generate_video():
+def generate_assets():
     """
-    生成解说视频接口
+    生成解说素材接口(图片和音频)
     请求格式:
     {
         "session_id": "会话ID",
-        "解说语种": "中文",
         "解说声音": "zh_female_yuanqinvyou_moon_bigtts",
         "视频风格": "卡通",
         "resolution_x": 1280,
         "resolution_y": 720
     }
-    文件上传:
-    - background_music: 背景音乐文件
     """
-    # 获取请求数据
+    data = request.form.to_dict()
+    if not data:
+        return jsonify({'error': 'Invalid data'}), 400
+
+    session_id = data.get('session_id')
+    if not session_id:
+        return jsonify({'error': 'session_id is required'}), 400
+
+    # 会话级速率限制
+    if not check_rate_limit(session_id):
+        return jsonify({'error': 'Rate limit exceeded for this session'}), 429
+
+    r = redis_dao.get_connection()
+    try:
+        # 1. 从Redis获取解说词
+        commentary = r.get(f"session:{session_id}:commentary")
+        if not commentary:
+            return jsonify({'error': 'No commentary found for this session'}), 404
+
+        # 2. 处理解说词生成音频和素材
+        voice_type = data.get('解说声音', "zh_male_jieshuoxiaoming_moon_bigtts")
+        video_type = data.get('视频风格', "写实风格")
+        resolution_x = int(data.get('resolution_x', 1280))
+        resolution_y = int(data.get('resolution_y', 720))
+
+        # save_path, elements = process_commentary(
+        #     commentary,
+        #     video_type,
+        #     voice_type,
+        #     resolution=(resolution_x, resolution_y)
+        # )
+        save_path = "output/result_20250814_160147"
+        elements = [
+            (
+                os.path.join(save_path, "image_1.jpg"),
+                os.path.join(save_path, "audio_1.mp3"),
+                os.path.join(save_path, "text_1.txt")
+            ),
+            (
+                os.path.join(save_path, "image_2.jpg"),
+                os.path.join(save_path, "audio_2.mp3"),
+                os.path.join(save_path, "text_2.txt")
+            ),
+            (
+                os.path.join(save_path, "image_3.jpg"),
+                os.path.join(save_path, "audio_3.mp3"),
+                os.path.join(save_path, "text_3.txt")
+            ),
+            (
+                os.path.join(save_path, "image_4.jpg"),
+                os.path.join(save_path, "audio_4.mp3"),
+                os.path.join(save_path, "text_4.txt")
+            ),
+            (
+                os.path.join(save_path, "image_5.jpg"),
+                os.path.join(save_path, "audio_5.mp3"),
+                os.path.join(save_path, "text_5.txt")
+            ),
+            (
+                os.path.join(save_path, "image_6.jpg"),
+                os.path.join(save_path, "audio_6.mp3"),
+                os.path.join(save_path, "text_6.txt")
+            ),
+        ]
+
+        # 3. 将素材信息存入Redis
+        # 存储临时目录路径，设置1小时过期
+        r.setex(f"session:{session_id}:save_path", 3600, save_path)
+
+        # 清空旧的素材列表
+        r.delete(f"session:{session_id}:image_paths")
+        r.delete(f"session:{session_id}:audio_paths")
+        r.delete(f"session:{session_id}:text_paths")
+
+        # 将素材路径分别存入不同的列表
+        for segment in elements:
+            image_path, audio_path, text_path = segment
+            r.rpush(f"session:{session_id}:image_paths", image_path)
+            r.rpush(f"session:{session_id}:audio_paths", audio_path)
+            r.rpush(f"session:{session_id}:text_paths", text_path)
+
+        return jsonify({
+            'status': 'success',
+            'session_id': session_id,
+            'asset_count': len(elements),
+            'expire_time': 3600
+        })
+
+    except json.JSONDecodeError:
+        return jsonify({'error': 'Failed to parse commentary data'}), 500
+    except ValueError as ve:
+        return jsonify({'error': f'Invalid resolution value: {str(ve)}'}), 400
+    except Exception as e:
+        app.logger.error(f"生成素材失败: {str(e)}")
+        return jsonify({
+            'error': 'Failed to generate assets',
+            'details': str(e)
+        }), 500
+
+
+@app.route('/api/novel/update_asset', methods=['POST'])
+@limiter.limit(app.config['RATE_LIMIT'])
+def update_asset():
+    """
+    更新单个素材接口（支持文件上传）
+    请求格式:
+    - form-data:
+        session_id: 会话ID
+        asset_type: image/audio/text  # 素材类型
+        index: 0  # 要修改的素材索引
+        file: 新素材文件
+    """
+    # 获取表单数据
+    session_id = request.form.get('session_id')
+    asset_type = request.form.get('asset_type')
+    index = request.form.get('index')
+    file = request.files.get('file')
+
+    # 参数验证
+    if not all([session_id, asset_type, index, file]):
+        return jsonify({'error': 'Missing required parameters'}), 400
+
+    try:
+        index = int(index)
+    except ValueError:
+        return jsonify({'error': 'Index must be integer'}), 400
+
+    if asset_type not in ['image', 'audio', 'text']:
+        return jsonify({'error': 'Invalid asset type'}), 400
+
+    # 验证文件类型
+    valid_extensions = {
+        'image': ['.jpg', '.jpeg', '.png', '.webp'],
+        'audio': ['.mp3', '.wav'],
+        'text': ['.txt']
+    }
+    file_ext = os.path.splitext(file.filename)[1].lower()
+    if file_ext not in valid_extensions[asset_type]:
+        return jsonify({
+            'error': f'Invalid file type for {asset_type}',
+            'allowed': valid_extensions[asset_type]
+        }), 400
+
+    r = redis_dao.get_connection()
+    try:
+        # 检查会话是否存在
+        save_path = r.get(f"session:{session_id}:save_path")
+        if not save_path:
+            return jsonify({'error': 'Session not found'}), 404
+
+        # 检查索引是否有效
+        key = f"session:{session_id}:{asset_type}_paths"
+        if index < 0 or index >= r.llen(key):
+            return jsonify({'error': 'Invalid index'}), 400
+
+        # 获取旧文件路径
+        old_path = r.lindex(key, index)
+
+        # 创建新文件名（保持相同扩展名）
+        new_filename = f"{asset_type}_{index}{file_ext}"
+        new_path = os.path.join(save_path, new_filename)
+
+        # 保存新文件
+        file.save(new_path)
+
+        # 更新Redis中的路径
+        r.lset(key, index, new_path)
+
+        # 删除旧文件（如果存在且不是同一个文件）
+        if old_path != new_path and os.path.exists(old_path):
+            os.remove(old_path)
+
+        return jsonify({
+            'status': 'success',
+            'session_id': session_id,
+            'asset_type': asset_type,
+            'index': index,
+            'new_path': new_path
+        })
+
+    except Exception as e:
+        app.logger.error(f"更新素材失败: {str(e)}")
+        return jsonify({
+            'error': 'Failed to update asset',
+            'details': str(e)
+        }), 500
+
+
+@app.route('/api/novel/get_image_assets', methods=['GET'])
+def get_image_assets():
+    """
+    分页获取图片素材文件
+    请求参数:
+    - session_id: 会话ID (必填)
+    - page: 页码 (默认1)
+    - per_page: 每页数量 (默认10)
+    """
+    session_id = request.args.get('session_id')
+    page = request.args.get('page', default=1, type=int)
+    per_page = request.args.get('size', default=10, type=int)
+
+    if not session_id:
+        return jsonify({'error': 'session_id is required'}), 400
+
+    r = redis_dao.get_connection()
+    try:
+        # 检查会话是否存在
+        if not r.exists(f"session:{session_id}:save_path"):
+            return jsonify({'error': 'Session not found'}), 404
+
+        # 获取所有图片路径
+        image_key = f"session:{session_id}:image_paths"
+        total_images = r.llen(image_key)
+
+        # 计算分页
+        start = (page - 1) * per_page
+        end = start + per_page - 1
+        if end > total_images:
+            end = total_images-1
+
+        if start >= total_images:
+            return jsonify({
+                'images': [],
+                'pagination': {
+                    'page': page,
+                    'per_page': per_page,
+                    'total': total_images,
+                    'has_next': False
+                }
+            })
+
+        # 获取当前页的图片路径
+        image_paths = [
+            path for path in
+            r.lrange(image_key, start, end)
+        ]
+
+        # 验证文件存在性并生成响应数据
+        images_data = []
+        for i, img_path in enumerate(image_paths, start=start):
+            if not os.path.exists(img_path):
+                continue
+
+            # 获取文件二进制数据
+            with open(img_path, 'rb') as f:
+                img_data = base64.b64encode(f.read()).decode('utf-8')
+
+            images_data.append({
+                'index': i,
+                'filename': os.path.basename(img_path),
+                'data': f"data:image/{os.path.splitext(img_path)[1][1:]};base64,{img_data}",
+                'path': img_path
+            })
+
+        return jsonify({
+            'images': images_data,
+            'pagination': {
+                'page': page,
+                'per_page': per_page,
+                'total': total_images,
+                'has_next': end < total_images - 1
+            }
+        })
+
+    except Exception as e:
+        app.logger.error(f"获取图片素材失败: {str(e)}")
+        return jsonify({
+            'error': 'Failed to get image assets',
+            'details': str(e)
+        }), 500
+
+
+@app.route('/api/novel/get_audio_asset', methods=['GET'])
+def get_audio_asset():
+    """
+    获取单个音频素材文件
+    请求参数:
+    - session_id: 会话ID (必填)
+    - index: 音频索引 (必填)
+    - download: 是否作为附件下载 (可选)
+    """
+    session_id = request.args.get('session_id')
+    index = request.args.get('index')
+    download = request.args.get('download', default=False, type=bool)
+
+    if not all([session_id, index is not None]):
+        return jsonify({'error': 'session_id and index are required'}), 400
+
+    try:
+        index = int(index)
+    except ValueError:
+        return jsonify({'error': 'Index must be integer'}), 400
+
+    r = redis_dao.get_connection()
+    try:
+        # 检查会话是否存在
+        if not r.exists(f"session:{session_id}:save_path"):
+            return jsonify({'error': 'Session not found'}), 404
+
+        # 检查索引是否有效
+        audio_key = f"session:{session_id}:audio_paths"
+        if index < 0 or index >= r.llen(audio_key):
+            return jsonify({'error': 'Invalid index'}), 400
+
+        # 获取音频路径
+        audio_path = r.lindex(audio_key, index)
+        if not audio_path:
+            return jsonify({'error': 'Audio not found'}), 404
+
+
+        # 检查文件是否存在
+        if not os.path.exists(audio_path):
+            return jsonify({'error': 'Audio file not found on server'}), 404
+
+        # 确定MIME类型
+        ext = os.path.splitext(audio_path)[1].lower()
+        mime_type = {
+            '.mp3': 'audio/mpeg',
+            '.wav': 'audio/wav',
+            '.ogg': 'audio/ogg'
+        }.get(ext, 'audio/mpeg')
+
+        # 发送文件
+        return send_file(
+            audio_path,
+            mimetype=mime_type,
+            as_attachment=download,
+            download_name=os.path.basename(audio_path) if download else None
+        )
+
+    except Exception as e:
+        app.logger.error(f"获取音频素材失败: {str(e)}")
+        return jsonify({
+            'error': 'Failed to get audio asset',
+            'details': str(e)
+        }), 500
+
+
+@app.route('/api/novel/create_video', methods=['POST'])
+@limiter.limit(app.config['RATE_LIMIT'])
+def generate_video():
+    """
+    生成最终视频接口
+    请求格式:
+    {
+        "session_id": "会话ID",
+        "resolution_x": 1280,
+        "resolution_y": 720
+    }
+    文件上传:
+    - background_music: 背景音乐文件(可选)
+    """
     data = request.form.to_dict()
     if not data:
         return jsonify({'error': 'Invalid data'}), 400
@@ -560,84 +909,80 @@ def generate_video():
 
     r = redis_dao.get_connection()
     try:
-        # 1. 从Redis获取解说词
-        commentary = r.get(f"session:{session_id}:commentary")
-        if not commentary:
-            return jsonify({'error': 'No commentary found for this session'}), 404
+        # 1. 从Redis获取素材信息
+        save_path = r.get(f"session:{session_id}:save_path")
+        if not save_path:
+            return jsonify({'error': 'No assets found for this session. Please generate assets first.'}), 404
+
+        # 获取所有素材路径
+        image_paths = r.lrange(f"session:{session_id}:image_paths", 0, -1)
+        audio_paths = r.lrange(f"session:{session_id}:audio_paths", 0, -1)
+        text_paths = r.lrange(f"session:{session_id}:text_paths", 0, -1)
+
+        if not image_paths or not audio_paths or not text_paths:
+            return jsonify({'error': 'Incomplete assets data'}), 404
+
+        # 检查素材数量是否一致
+        if len(image_paths) != len(audio_paths) or len(image_paths) != len(text_paths):
+            return jsonify({'error': 'Assets data corrupted'}), 500
+
+        # 2. 组合segments
+        segments = list(zip(
+            [path for path in image_paths],
+            [path for path in audio_paths],
+            [path for path in text_paths]
+        ))
 
         # 处理背景音乐文件
         if bg_music_file:
-            # 创建临时目录
             temp_dir = tempfile.mkdtemp()
             bg_music_path = os.path.join(temp_dir, "background_music.mp3")
             bg_music_file.save(bg_music_path)
 
-        save_path = ""
-        try:
-            # 3. 处理解说词生成音频和素材
-            voice_type = data.get('解说声音', "zh_male_jieshuoxiaoming_moon_bigtts")
-            video_type = data.get('视频风格', "写实风格")
+        # 3. 生成视频
+        resolution_x = int(data.get('resolution_x', 1280))
+        resolution_y = int(data.get('resolution_y', 720))
 
-            # 获取分辨率，默认1280x720
-            resolution_x = int(data.get('resolution_x', 1280))
-            resolution_y = int(data.get('resolution_y', 720))
+        output_file = os.path.join(save_path, "final_video.mp4")
+        video_path = create_image_based_video(
+            segments=segments,
+            output_file=output_file,
+            resolution=(resolution_x, resolution_y),
+            fps=25,
+            bg_music_path=bg_music_path
+        )
 
-            save_path, elements = process_commentary(
-                commentary,
-                video_type,
-                voice_type,
-                resolution=(resolution_x, resolution_y)
-            )
+        # 4. 返回生成的视频文件
+        response = send_file(
+            video_path,
+            mimetype='video/mp4',
+            as_attachment=False,
+            download_name=f"commentary_{session_id}.mp4"
+        )
 
-            # 4. 生成视频
-            output_file = os.path.join(save_path, "final_video.mp4")
-            video_path = create_image_based_video(
-                segments=elements,
-                output_file=output_file,
-                resolution=(resolution_x, resolution_y),
-                fps=25,
-                bg_music_path=bg_music_path
-            )
+        # 5. 添加自定义头部信息
+        response.headers['X-Session-ID'] = session_id
+        response.headers['X-Video-Size'] = os.path.getsize(video_path)
+        response.headers['X-Resolution'] = f"{resolution_x}x{resolution_y}"
 
-            # 5. 返回生成的视频文件
-            response = send_file(
-                video_path,
-                mimetype='video/mp4',
-                as_attachment=False,
-                download_name=f"commentary_{session_id}.mp4"
-            )
+        return response
 
-            # 6. 添加自定义头部信息
-            response.headers['X-Session-ID'] = session_id
-            response.headers['X-Video-Size'] = os.path.getsize(video_path)
-            response.headers['X-Resolution'] = f"{resolution_x}x{resolution_y}"
-
-            return response
-
-        finally:
-            # 7. 清理临时文件
-            try:
-                if os.path.exists(save_path):
-                    shutil.rmtree(save_path)
-                if bg_music_path and os.path.exists(bg_music_path):
-                    os.remove(bg_music_path)
-                    # Remove the temp directory if empty
-                    temp_dir = os.path.dirname(bg_music_path)
-                    if os.path.exists(temp_dir) and not os.listdir(temp_dir):
-                        os.rmdir(temp_dir)
-            except Exception as cleanup_error:
-                app.logger.error(f"清理临时文件失败: {str(cleanup_error)}")
-
-    except json.JSONDecodeError:
-        return jsonify({'error': 'Failed to parse commentary data'}), 500
-    except ValueError as ve:
-        return jsonify({'error': f'Invalid resolution value: {str(ve)}'}), 400
     except Exception as e:
         app.logger.error(f"生成视频失败: {str(e)}")
         return jsonify({
             'error': 'Failed to generate video',
             'details': str(e)
         }), 500
+    finally:
+        # 清理临时文件
+        try:
+            if bg_music_path and os.path.exists(bg_music_path):
+                os.remove(bg_music_path)
+                temp_dir = os.path.dirname(bg_music_path)
+                if os.path.exists(temp_dir) and not os.listdir(temp_dir):
+                    os.rmdir(temp_dir)
+        except Exception as cleanup_error:
+            app.logger.error(f"清理临时文件失败: {str(cleanup_error)}")
 
 
 # 新增诗歌相关接口
@@ -729,7 +1074,7 @@ def create_poetry_commentary():
 
 @app.route('/api/poetry/remake_commentary', methods=['POST'])
 @limiter.limit(app.config['RATE_LIMIT'])
-def remake_commentary():
+def remake_poetry_commentary():
     """根据现有解说词和需求生成新的解说词"""
     # 获取请求参数
     commentary = request.form.get('commentary', '')
@@ -757,7 +1102,6 @@ def remake_commentary():
             "error": "解说词生成失败",
             "details": str(e)
         }), 500
-
 
 
 @app.route('/api/poetry/create_video', methods=['POST'])

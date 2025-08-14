@@ -60,7 +60,7 @@ def _generate_and_download_image(prompt: str, max_retries: int = 2,resolution=(1
     """生成并下载图片（自动重试敏感内容错误）"""
     retry_count = 0
     last_error = None
-    size = str(resolution[0])+str(resolution[1])
+    size = str(resolution[0])+'x'+str(resolution[1])
     while retry_count <= max_retries:
         try:
             # 1. 生成图片URL（添加安全提示）
