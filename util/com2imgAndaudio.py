@@ -22,6 +22,7 @@ def process_commentary(commentary: str, video_type: str, voice_type: str, resolu
     # 1. 分段处理（保留句号）
     raw_sentences = re.split(r'(?<=[。？！.?!])', commentary.strip())
     sentences = [s + f"[{video_type}]" for s in raw_sentences if s.strip()]
+    sentences1 = [s for s in raw_sentences if s.strip()]
     # 2. 线程池配置（建议根据API限制调整max_workers）
     with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
         # 3. 提交所有任务
@@ -30,7 +31,7 @@ def process_commentary(commentary: str, video_type: str, voice_type: str, resolu
             # 图片任务
             future_to_index[executor.submit(_generate_and_download_image, sentence)] = (idx, 'image')
             # 音频任务
-            future_to_index[executor.submit(_generate_and_download_audio, sentence, voice_type)] = (idx, 'audio')
+            future_to_index[executor.submit(_generate_and_download_audio, sentences1[idx], voice_type)] = (idx, 'audio')
 
         # 4. 初始化结果容器
         image_data = [None] * len(sentences)
@@ -53,7 +54,7 @@ def process_commentary(commentary: str, video_type: str, voice_type: str, resolu
                 else:
                     audio_data[idx] = b''
 
-    return save_and_return_results(sentences, image_data, audio_data)
+    return save_and_return_results(sentences1, image_data, audio_data)
 
 
 def _generate_and_download_image(prompt: str, max_retries: int = 2,resolution=(1920, 1080)) -> bytes:

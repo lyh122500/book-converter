@@ -227,7 +227,7 @@ def process_file():
         return jsonify({'error': str(e)}), 500
 
 
-@app.route('/api/novel/get_author_info', methods=['GET'])
+@app.route('/api/novel/get_author_info', methods=['POST'])
 @limiter.limit(app.config['RATE_LIMIT'])
 def get_author_info_endpoint():
     """根据session_id获取作者信息"""
@@ -904,7 +904,7 @@ def generate_video():
         return jsonify({'error': 'Rate limit exceeded for this session'}), 429
 
     # 获取背景音乐文件
-    bg_music_file = request.files.get('background_music')
+    bg_music_file = request.files.get('背景音乐')
     bg_music_path = None
 
     r = redis_dao.get_connection()
@@ -928,9 +928,10 @@ def generate_video():
 
         # 2. 组合segments
         segments = list(zip(
+            [path for path in text_paths],
             [path for path in image_paths],
-            [path for path in audio_paths],
-            [path for path in text_paths]
+            [path for path in audio_paths]
+
         ))
 
         # 处理背景音乐文件
@@ -938,10 +939,10 @@ def generate_video():
             temp_dir = tempfile.mkdtemp()
             bg_music_path = os.path.join(temp_dir, "background_music.mp3")
             bg_music_file.save(bg_music_path)
-
+            print(bg_music_path)
         # 3. 生成视频
-        resolution_x = int(data.get('resolution_x', 1280))
-        resolution_y = int(data.get('resolution_y', 720))
+        resolution_x = int(data.get('分辨率x', 1280))
+        resolution_y = int(data.get('分辨率y', 720))
 
         output_file = os.path.join(save_path, "final_video.mp4")
         video_path = create_image_based_video(
@@ -1217,6 +1218,115 @@ def generate_poetry_video():
             'details': str(e)
         }), 500
 
+@app.route('/api/poetry/generate_assets', methods=['POST'])
+@limiter.limit(app.config['RATE_LIMIT'])
+def poetry_generate_assets():
+    """
+    生成解说素材接口(图片和音频)
+    请求格式:
+    {
+        "session_id": "会话ID",
+        "解说声音": "zh_female_yuanqinvyou_moon_bigtts",
+        "视频风格": "卡通",
+        "resolution_x": 1280,
+        "resolution_y": 720
+    }
+    """
+    data = request.form.to_dict()
+    if not data:
+        return jsonify({'error': 'Invalid data'}), 400
+
+    session_id = data.get('session_id')
+    if not session_id:
+        return jsonify({'error': 'session_id is required'}), 400
+
+    # 会话级速率限制
+    if not check_rate_limit(session_id):
+        return jsonify({'error': 'Rate limit exceeded for this session'}), 429
+
+    r = redis_dao.get_connection()
+    try:
+        # 1. 从Redis获取解说词
+        commentary = data.get('commentary',"")
+        # 2. 处理解说词生成音频和素材
+        voice_type = data.get('解说声音', "zh_male_jieshuoxiaoming_moon_bigtts")
+        video_type = data.get('视频风格', "写实风格")
+        resolution_x = int(data.get('resolution_x', 1280))
+        resolution_y = int(data.get('resolution_y', 720))
+
+        # save_path, elements = process_commentary(
+        #     commentary,
+        #     video_type,
+        #     voice_type,
+        #     resolution=(resolution_x, resolution_y)
+        # )
+        save_path = "output/result_20250814_160147"
+        elements = [
+            (
+                os.path.join(save_path, "image_1.jpg"),
+                os.path.join(save_path, "audio_1.mp3"),
+                os.path.join(save_path, "text_1.txt")
+            ),
+            (
+                os.path.join(save_path, "image_2.jpg"),
+                os.path.join(save_path, "audio_2.mp3"),
+                os.path.join(save_path, "text_2.txt")
+            ),
+            (
+                os.path.join(save_path, "image_3.jpg"),
+                os.path.join(save_path, "audio_3.mp3"),
+                os.path.join(save_path, "text_3.txt")
+            ),
+            (
+                os.path.join(save_path, "image_4.jpg"),
+                os.path.join(save_path, "audio_4.mp3"),
+                os.path.join(save_path, "text_4.txt")
+            ),
+            (
+                os.path.join(save_path, "image_5.jpg"),
+                os.path.join(save_path, "audio_5.mp3"),
+                os.path.join(save_path, "text_5.txt")
+            ),
+            (
+                os.path.join(save_path, "image_6.jpg"),
+                os.path.join(save_path, "audio_6.mp3"),
+                os.path.join(save_path, "text_6.txt")
+            ),
+        ]
+
+        # 3. 将素材信息存入Redis
+        # 存储临时目录路径，设置1小时过期
+        r.setex(f"session:{session_id}:save_path", 3600, save_path)
+
+        # 清空旧的素材列表
+        r.delete(f"session:{session_id}:image_paths")
+        r.delete(f"session:{session_id}:audio_paths")
+        r.delete(f"session:{session_id}:text_paths")
+
+        # 将素材路径分别存入不同的列表
+        for segment in elements:
+            image_path, audio_path, text_path = segment
+            r.rpush(f"session:{session_id}:image_paths", image_path)
+            r.rpush(f"session:{session_id}:audio_paths", audio_path)
+            r.rpush(f"session:{session_id}:text_paths", text_path)
+
+        return jsonify({
+            'status': 'success',
+            'session_id': session_id,
+            'asset_count': len(elements),
+            'expire_time': 3600
+        })
+
+    except json.JSONDecodeError:
+        return jsonify({'error': 'Failed to parse commentary data'}), 500
+    except ValueError as ve:
+        return jsonify({'error': f'Invalid resolution value: {str(ve)}'}), 400
+    except Exception as e:
+        app.logger.error(f"生成素材失败: {str(e)}")
+        return jsonify({
+            'error': 'Failed to generate assets',
+            'details': str(e)
+        }), 500
 
 @app.route('/api/session/<session_id>', methods=['GET'])
 @limiter.limit(app.config['RATE_LIMIT'])
@@ -1258,4 +1368,4 @@ def delete_session(session_id):
 
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(host='0.0.0.0', port=3000, debug=True)
