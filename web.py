@@ -1328,6 +1328,64 @@ def poetry_generate_assets():
             'details': str(e)
         }), 500
 
+
+# 音色ID到文件名的映射
+VOICE_ID_TO_FILE = {
+    'zh_female_tianmeitaozi_mars_bigtts': '甜美桃子_自我介绍.mp3',
+    'zh_female_vv_mars_bigtts': 'Vivi_自我介绍.mp3',
+    'zh_male_wennuanahu_moon_bigtts': '温暖阿虎Alvin_自我介绍.mp3',
+    'zh_male_shaonianzixin_moon_bigtts': '少年梓辛Brayan_自我介绍.mp3'
+}
+
+# 音色信息列表
+VOICES = [
+    {'id': 'zh_female_tianmeitaozi_mars_bigtts', 'name': '甜美桃子', 'description': '甜美可爱的女声', 'language': '中文', 'platforms': '通用', 'category': 'female'},
+    {'id': 'zh_female_vv_mars_bigtts', 'name': 'Vivi', 'description': '清新自然的女声', 'language': '中文', 'platforms': '通用', 'category': 'female'},
+    {'id': 'zh_male_wennuanahu_moon_bigtts', 'name': '温暖阿虎Alvin', 'description': '温暖亲切的男声', 'language': '中文, 美式英语', 'platforms': '豆包, Cici', 'category': 'male'},
+    {'id': 'zh_male_shaonianzixin_moon_bigtts', 'name': '少年梓辛Brayan', 'description': '青春活力的男声', 'language': '中文, 美式英语', 'platforms': '豆包, Cici, 剪映', 'category': 'male'}
+]
+
+@app.route('/api/get_intro_audio', methods=['GET'])
+def get_intro_audio():
+    """
+    获取音色自我介绍音频文件
+    请求参数:
+    - voice_id: 音色ID (必填)
+    - download: 是否作为附件下载 (可选)
+    """
+    voice_id = request.args.get('voice_id')
+    download = request.args.get('download', default=False, type=bool)
+
+    if not voice_id:
+        return jsonify({'error': 'voice_id is required'}), 400
+
+    # 检查音色ID是否存在
+    if voice_id not in VOICE_ID_TO_FILE:
+        return jsonify({'error': 'Voice ID not found'}), 404
+
+    # 获取音频文件名
+    audio_filename = VOICE_ID_TO_FILE[voice_id]
+    audio_path = os.path.join('output/preaudio', audio_filename)
+
+    # 检查文件是否存在
+    if not os.path.exists(audio_path):
+        return jsonify({'error': 'Audio file not found on server'}), 404
+
+    try:
+        # 发送文件
+        return send_file(
+            audio_path,
+            mimetype='audio/mpeg',
+            as_attachment=download,
+            download_name=audio_filename if download else None
+        )
+    except Exception as e:
+        app.logger.error(f"获取音频文件失败: {str(e)}")
+        return jsonify({
+            'error': 'Failed to get audio file',
+            'details': str(e)
+        }), 500
+
 @app.route('/api/session/<session_id>', methods=['GET'])
 @limiter.limit(app.config['RATE_LIMIT'])
 def get_session_status(session_id):
@@ -1366,6 +1424,7 @@ def delete_session(session_id):
     redis_dao.cleanup_session(session_id)
     return jsonify({'message': f'Session {session_id} deleted'}), 200
 
-
+from flask_cors import CORS
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=3000, debug=True)
+    #CORS(app, resources={r"/api/*": {"origins": "http://localhost:5173"}})
