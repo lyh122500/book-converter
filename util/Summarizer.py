@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 class Summarizer:
     def __init__(self, api_key="sk-d3c3323a507846189cb71d387be22988", base_url="https://api.deepseek.com",
-                 max_workers=10):
+                 max_workers=20):
         """
         初始化文件处理器
         :param api_key: DeepSeek API密钥

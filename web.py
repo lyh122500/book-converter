@@ -392,10 +392,14 @@ def create_commentary():
             f"=== 作者信息 ===\n{author_background}\n\n"
             f"=== 作品内容摘要 ===\n{summary}\n\n"
             f"=== 解说要求 ===\n{commentary_prompt}\n"
-            "根据内容分段返回解说词，每个分段会用于制作十秒的视频\n"
-            "中间正文是剧情讲解，且解说词数量不少于一万字\n"
-            "注意只输出解说词即可，不要任何额外输出\n"
+            "根据作品内容摘要以及解说要求返回解说词\n"
+            "解说词字数不少于一万字\n"
+            "注意只输出解说词内容即可，不要任何额外输出\n"
         )
+        file_path = os.path.join('output/', f"prompt_{author_info.get('作者姓名', '未知')}.txt")
+        with open(file_path, "w", encoding="utf-8") as file:
+            file.write(full_prompt)
+
         print(full_prompt)
 
         # 4. 调用DeepSeek API (同步调用)
