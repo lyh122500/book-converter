@@ -3,20 +3,16 @@ from openai import OpenAI
 from threading import Semaphore
 from concurrent.futures import ThreadPoolExecutor
 
+from config.global_config import Config
+
 
 class Summarizer:
-    def __init__(self, api_key="sk-d3c3323a507846189cb71d387be22988", base_url="https://api.deepseek.com",
-                 max_workers=10):
+    def __init__(self,max_workers=10):
         """
         初始化文件处理器
-        :param api_key: DeepSeek API密钥
-        :param base_url: API基础URL
         :param max_workers: 最大并发工作线程数
         """
-        self.client = OpenAI(
-            api_key=api_key,
-            base_url=base_url
-        )
+
         self.max_workers = max_workers
         self.semaphore = Semaphore(max_workers)
 
@@ -28,8 +24,8 @@ class Summarizer:
         :return: 处理后的总结文本
         """
         try:
-            response = self.client.chat.completions.create(
-                model="deepseek-chat",
+            response = Config.ecloudClient.chat.completions.create(
+                model="deepseek-v3",
                 messages=[
                     {
                         "role": "system",

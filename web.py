@@ -1,9 +1,11 @@
 import asyncio
 import base64
+import concurrent
 import json
 import shutil
 import tempfile
 import threading
+from datetime import datetime
 
 from flask import Flask, request, jsonify, send_file
 from flask_limiter import Limiter
@@ -392,8 +394,8 @@ def create_commentary():
             f"=== 作者信息 ===\n{author_background}\n\n"
             f"=== 作品内容摘要 ===\n{summary}\n\n"
             f"=== 解说要求 ===\n{commentary_prompt}\n"
-            "根据内容分段返回解说词，每个分段会用于制作十秒的视频\n"
-            "中间正文是剧情讲解，且解说词数量不少于一万字\n"
+            "根据作品内容摘要以及解说要求返回解说词\n"
+            "中间正文是剧情讲解，解说词字数不少于一万字\n"
             "注意只输出解说词即可，不要任何额外输出\n"
         )
         print(full_prompt)
@@ -564,45 +566,12 @@ def generate_assets():
         resolution_x = int(data.get('resolution_x', 1280))
         resolution_y = int(data.get('resolution_y', 720))
 
-        # save_path, elements = process_commentary(
-        #     commentary,
-        #     video_type,
-        #     voice_type,
-        #     resolution=(resolution_x, resolution_y)
-        # )
-        save_path = "output/result_20250814_160147"
-        elements = [
-            (
-                os.path.join(save_path, "image_1.jpg"),
-                os.path.join(save_path, "audio_1.mp3"),
-                os.path.join(save_path, "text_1.txt")
-            ),
-            (
-                os.path.join(save_path, "image_2.jpg"),
-                os.path.join(save_path, "audio_2.mp3"),
-                os.path.join(save_path, "text_2.txt")
-            ),
-            (
-                os.path.join(save_path, "image_3.jpg"),
-                os.path.join(save_path, "audio_3.mp3"),
-                os.path.join(save_path, "text_3.txt")
-            ),
-            (
-                os.path.join(save_path, "image_4.jpg"),
-                os.path.join(save_path, "audio_4.mp3"),
-                os.path.join(save_path, "text_4.txt")
-            ),
-            (
-                os.path.join(save_path, "image_5.jpg"),
-                os.path.join(save_path, "audio_5.mp3"),
-                os.path.join(save_path, "text_5.txt")
-            ),
-            (
-                os.path.join(save_path, "image_6.jpg"),
-                os.path.join(save_path, "audio_6.mp3"),
-                os.path.join(save_path, "text_6.txt")
-            ),
-        ]
+        save_path, elements = process_commentary(
+            commentary,
+            video_type,
+            voice_type,
+            resolution=(resolution_x, resolution_y)
+        )
 
         # 3. 将素材信息存入Redis
         # 存储临时目录路径，设置1小时过期
@@ -757,7 +726,7 @@ def get_image_assets():
         start = (page - 1) * per_page
         end = start + per_page - 1
         if end > total_images:
-            end = total_images-1
+            end = total_images - 1
 
         if start >= total_images:
             return jsonify({
@@ -847,7 +816,6 @@ def get_audio_asset():
         audio_path = r.lindex(audio_key, index)
         if not audio_path:
             return jsonify({'error': 'Audio not found'}), 404
-
 
         # 检查文件是否存在
         if not os.path.exists(audio_path):
@@ -986,7 +954,6 @@ def generate_video():
             app.logger.error(f"清理临时文件失败: {str(cleanup_error)}")
 
 
-# 新增诗歌相关接口
 @app.route('/api/poetry/upload', methods=['POST'])
 @limiter.limit(app.config['RATE_LIMIT'])
 def upload_poetry():
@@ -1009,30 +976,51 @@ def upload_poetry():
             poetry
         )
 
-        # 获取作者信息
-        async def get_author_info_async(insPoetry):
-            return await get_poetry_author_info(insPoetry)
-
-        author_info = asyncio.run(get_author_info_async(poetry))
-
-        # 获取诗歌翻译
-        async def poeTranslate(text):
-            client = Config.dsclient
-            response = await client.chat.completions.create(
-                model="deepseek-reasoner",
+        def get_poetry_translation():
+            app.logger.info(f"诗歌翻译任务开始: {datetime.now()}")
+            """获取诗歌翻译"""
+            response = Config.ecloudClient.chat.completions.create(
+                model="deepseek-v3",
                 messages=[
                     {"role": "system", "content": "你是一个专业的诗歌翻译家，请将以下诗歌翻译成现代白话文，清晰直白易于理解，不要出现复杂的用词"},
-                    {"role": "user", "content": text}
+                    {"role": "user", "content": poetry}
                 ],
                 temperature=0.3
             )
-            return response.choices[0].message.content
+            app.logger.info(f"诗歌翻译任务结束: {datetime.now()}")
+            return response
+        def get_poetry_author_info_wrapper(poetry_text):
+            app.logger.info(f"作者查询任务开始: {datetime.now()}")
+            result = get_poetry_author_info(poetry_text)
+            app.logger.info(f"作者查询任务结束: {datetime.now()}")
+            return result
+        # 使用线程池并行执行两个任务
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            # 同时提交两个任务
+            author_future = executor.submit(get_poetry_author_info_wrapper,poetry)
+            trans_future = executor.submit(get_poetry_translation)
 
-        trans_poetry = asyncio.run(poeTranslate(poetry))
+            # 使用as_completed等待所有任务完成
+            results = {}
+            for future in concurrent.futures.as_completed([author_future, trans_future]):
+                try:
+                    result = future.result()
+                    if hasattr(result, 'choices') and hasattr(result.choices[0].message, 'content'):
+                        results['translation'] = result.choices[0].message.content
+                    else:
+                        results['author_info'] = result
+                except Exception as e:
+                    app.logger.error(f"Task execution error: {str(e)}")
+                    # 可以选择继续等待另一个任务或者直接返回错误
+
+        # 检查两个任务是否都成功完成
+        if 'author_info' not in results or 'translation' not in results:
+            return jsonify({'error': 'Failed to process poetry'}), 500
+
         return jsonify({
             'session_id': session_id,
-            'author_info': author_info,
-            'trans_poetry': trans_poetry,
+            'author_info': results['author_info'],
+            'trans_poetry': results['translation'],
             'message': 'Poetry uploaded and processed successfully'
         }), 200
 
@@ -1218,6 +1206,7 @@ def generate_poetry_video():
             'details': str(e)
         }), 500
 
+
 @app.route('/api/poetry/generate_assets', methods=['POST'])
 @limiter.limit(app.config['RATE_LIMIT'])
 def poetry_generate_assets():
@@ -1247,7 +1236,7 @@ def poetry_generate_assets():
     r = redis_dao.get_connection()
     try:
         # 1. 从Redis获取解说词
-        commentary = data.get('commentary',"")
+        commentary = data.get('commentary', "")
         # 2. 处理解说词生成音频和素材
         voice_type = data.get('解说声音', "zh_male_jieshuoxiaoming_moon_bigtts")
         video_type = data.get('视频风格', "写实风格")
@@ -1339,11 +1328,16 @@ VOICE_ID_TO_FILE = {
 
 # 音色信息列表
 VOICES = [
-    {'id': 'zh_female_tianmeitaozi_mars_bigtts', 'name': '甜美桃子', 'description': '甜美可爱的女声', 'language': '中文', 'platforms': '通用', 'category': 'female'},
-    {'id': 'zh_female_vv_mars_bigtts', 'name': 'Vivi', 'description': '清新自然的女声', 'language': '中文', 'platforms': '通用', 'category': 'female'},
-    {'id': 'zh_male_wennuanahu_moon_bigtts', 'name': '温暖阿虎Alvin', 'description': '温暖亲切的男声', 'language': '中文, 美式英语', 'platforms': '豆包, Cici', 'category': 'male'},
-    {'id': 'zh_male_shaonianzixin_moon_bigtts', 'name': '少年梓辛Brayan', 'description': '青春活力的男声', 'language': '中文, 美式英语', 'platforms': '豆包, Cici, 剪映', 'category': 'male'}
+    {'id': 'zh_female_tianmeitaozi_mars_bigtts', 'name': '甜美桃子', 'description': '甜美可爱的女声', 'language': '中文',
+     'platforms': '通用', 'category': 'female'},
+    {'id': 'zh_female_vv_mars_bigtts', 'name': 'Vivi', 'description': '清新自然的女声', 'language': '中文', 'platforms': '通用',
+     'category': 'female'},
+    {'id': 'zh_male_wennuanahu_moon_bigtts', 'name': '温暖阿虎Alvin', 'description': '温暖亲切的男声', 'language': '中文, 美式英语',
+     'platforms': '豆包, Cici', 'category': 'male'},
+    {'id': 'zh_male_shaonianzixin_moon_bigtts', 'name': '少年梓辛Brayan', 'description': '青春活力的男声', 'language': '中文, 美式英语',
+     'platforms': '豆包, Cici, 剪映', 'category': 'male'}
 ]
+
 
 @app.route('/api/get_intro_audio', methods=['GET'])
 def get_intro_audio():
@@ -1386,6 +1380,7 @@ def get_intro_audio():
             'details': str(e)
         }), 500
 
+
 @app.route('/api/session/<session_id>', methods=['GET'])
 @limiter.limit(app.config['RATE_LIMIT'])
 def get_session_status(session_id):
@@ -1424,7 +1419,7 @@ def delete_session(session_id):
     redis_dao.cleanup_session(session_id)
     return jsonify({'message': f'Session {session_id} deleted'}), 200
 
-from flask_cors import CORS
+
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=3000, debug=True)
-    #CORS(app, resources={r"/api/*": {"origins": "http://localhost:5173"}})
+    app.run(host='0.0.0.0', port=5000, debug=True)
+    # CORS(app, resources={r"/api/*": {"origins": "http://localhost:5173"}})

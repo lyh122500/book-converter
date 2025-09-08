@@ -25,9 +25,15 @@ class Config:
         base_url="https://api.deepseek.com"
     )
 
-    image2videoClient = AsyncOpenAI(
-        api_key="sk-0HuumZaRs4mnYUW_ZjW_y1mCPOvTp1LkU45bJbqsJ1I",
-        base_url="https://zhenze-huhehaote.cmecloud.cn/v1/video/generate"
+
+    ecloudClient = OpenAI(
+        api_key="AajlZARHvTpZARPumrdvS1tSuOUBsG1xbWHyznpGsmU",
+        base_url="https://zhenze-huhehaote.cmecloud.cn/v1"
+    )
+
+    asyncEcloudClient = AsyncOpenAI(
+        api_key="AajlZARHvTpZARPumrdvS1tSuOUBsG1xbWHyznpGsmU",
+        base_url="https://zhenze-huhehaote.cmecloud.cn/v1"
     )
 
 

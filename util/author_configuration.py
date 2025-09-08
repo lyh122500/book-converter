@@ -83,7 +83,7 @@ async def get_author_info(book_title: str) -> dict:
         }
 
 
-async def get_poetry_author_info(poetry: str) -> dict:
+def get_poetry_author_info(poetry: str) -> dict:
     """
     根据书名获取作者信息的函数
 
@@ -121,16 +121,15 @@ async def get_poetry_author_info(poetry: str) -> dict:
         2. 代表作列出3-5部最知名的作品
         3. 作者背景应包括时代背景和重要经历
         4. 创作背景应说明创作时期和动机
-        5. 只返回JSON格式数据，不要额外解释
+        5. 只返回要求的JSON格式数据，不要任何额外输出
         """
 
         # 调用API
-        response = await Config.dsclient.chat.completions.create(
-            model="deepseek-chat",
+        response = Config.ecloudClient.chat.completions.create(
+            model="deepseek-v3",
             messages=[
                 {"role": "user", "content": prompt}
             ],
-            response_format={"type": "json_object"}
         )
 
         # 解析响应
