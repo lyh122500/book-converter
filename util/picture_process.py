@@ -61,9 +61,8 @@ def find_system_fonts():
     system = platform.system()
     if system == 'Darwin':  # macOS
         return [
-            '/System/Library/Fonts',
-            '/Library/Fonts',
-            os.path.expanduser('~/Library/Fonts')
+            '/System/Library/Fonts'
+
         ]
     elif system == 'Windows':  # Windows
         return [
@@ -78,13 +77,14 @@ def find_system_fonts():
 
 
 def create_image_based_video(
-        segments,
+        segments1,
         output_file="output.mp4",
         resolution=(1920, 1080),
         fps=30,
         bg_music_path=None,
         bg_volume=0.3
 ):
+    print(segments1)
     """
     从图片和音频创建视频并添加字幕和背景音乐
 
@@ -112,8 +112,8 @@ def create_image_based_video(
         logging.info(f"检测到的字体目录: {font_paths or '无'}")
 
         # 处理每个片段
-        for i, (subtitle, image, audio) in enumerate(segments):
-            logging.info(f"处理第 {i + 1}/{len(segments)} 个片段...")
+        for i, (subtitle, image, audio) in enumerate(segments1):
+            logging.info(f"处理第 {i + 1}/{len(segments1)} 个片段...")
             try:
                 subtitle = validate_file(subtitle)
                 image = validate_file(image)
@@ -137,7 +137,7 @@ def create_image_based_video(
                     if attempt == 1:  # 方案1: subtitles滤镜
                         subtitle_filter = (
                             f"subtitles='{subtitle}':fontsdir='{font_paths}':"
-                            f"force_style='FontName=Arial,FontSize=24,PrimaryColour=&H00FFFFFF'"
+                            f"force_style='FontName=ArialHB,FontSize=24,PrimaryColour=&H00FFFFFF'"
                         )
                         filters = f"{scale_filter},{pad_filter},{subtitle_filter}"
                     elif attempt == 2:  # 方案2: drawtext滤镜

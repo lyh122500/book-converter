@@ -883,9 +883,10 @@ def generate_video():
             return jsonify({'error': 'No assets found for this session. Please generate assets first.'}), 404
 
         # 获取所有素材路径
-        image_paths = r.lrange(f"session:{session_id}:image_paths", 0, -1)
-        audio_paths = r.lrange(f"session:{session_id}:audio_paths", 0, -1)
-        text_paths = r.lrange(f"session:{session_id}:text_paths", 0, -1)
+        text_paths = r.lrange(f"session:{session_id}:image_paths", 0, -1)
+
+        image_paths = r.lrange(f"session:{session_id}:audio_paths", 0, -1)
+        audio_paths = r.lrange(f"session:{session_id}:text_paths", 0, -1)
 
         if not image_paths or not audio_paths or not text_paths:
             return jsonify({'error': 'Incomplete assets data'}), 404
@@ -895,26 +896,20 @@ def generate_video():
             return jsonify({'error': 'Assets data corrupted'}), 500
 
         # 2. 组合segments
-        segments = list(zip(
-            [path for path in text_paths],
-            [path for path in image_paths],
-            [path for path in audio_paths]
-
-        ))
-
+        segments = [[text, image, audio] for text, image, audio in zip(text_paths, image_paths, audio_paths)]
+        print(segments)
         # 处理背景音乐文件
         if bg_music_file:
             temp_dir = tempfile.mkdtemp()
             bg_music_path = os.path.join(temp_dir, "background_music.mp3")
             bg_music_file.save(bg_music_path)
-            print(bg_music_path)
         # 3. 生成视频
         resolution_x = int(data.get('分辨率x', 1280))
         resolution_y = int(data.get('分辨率y', 720))
 
         output_file = os.path.join(save_path, "final_video.mp4")
         video_path = create_image_based_video(
-            segments=segments,
+            segments1=segments,
             output_file=output_file,
             resolution=(resolution_x, resolution_y),
             fps=25,
@@ -1159,7 +1154,7 @@ def generate_poetry_video():
             # 4. 生成视频
             output_file = os.path.join(save_path, "final_video.mp4")
             video_path = create_image_based_video(
-                segments=elements,
+                segments1=elements,
                 output_file=output_file,
                 resolution=(resolution_x, resolution_y),
                 fps=25,
@@ -1243,45 +1238,45 @@ def poetry_generate_assets():
         resolution_x = int(data.get('resolution_x', 1280))
         resolution_y = int(data.get('resolution_y', 720))
 
-        # save_path, elements = process_commentary(
-        #     commentary,
-        #     video_type,
-        #     voice_type,
-        #     resolution=(resolution_x, resolution_y)
-        # )
-        save_path = "output/result_20250814_160147"
-        elements = [
-            (
-                os.path.join(save_path, "image_1.jpg"),
-                os.path.join(save_path, "audio_1.mp3"),
-                os.path.join(save_path, "text_1.txt")
-            ),
-            (
-                os.path.join(save_path, "image_2.jpg"),
-                os.path.join(save_path, "audio_2.mp3"),
-                os.path.join(save_path, "text_2.txt")
-            ),
-            (
-                os.path.join(save_path, "image_3.jpg"),
-                os.path.join(save_path, "audio_3.mp3"),
-                os.path.join(save_path, "text_3.txt")
-            ),
-            (
-                os.path.join(save_path, "image_4.jpg"),
-                os.path.join(save_path, "audio_4.mp3"),
-                os.path.join(save_path, "text_4.txt")
-            ),
-            (
-                os.path.join(save_path, "image_5.jpg"),
-                os.path.join(save_path, "audio_5.mp3"),
-                os.path.join(save_path, "text_5.txt")
-            ),
-            (
-                os.path.join(save_path, "image_6.jpg"),
-                os.path.join(save_path, "audio_6.mp3"),
-                os.path.join(save_path, "text_6.txt")
-            ),
-        ]
+        save_path, elements = process_commentary(
+            commentary,
+            video_type,
+            voice_type,
+            resolution=(resolution_x, resolution_y)
+        )
+        # save_path = "output/result_20250814_160147"
+        # elements = [
+        #     (
+        #         os.path.join(save_path, "image_1.jpg"),
+        #         os.path.join(save_path, "audio_1.mp3"),
+        #         os.path.join(save_path, "text_1.txt")
+        #     ),
+        #     (
+        #         os.path.join(save_path, "image_2.jpg"),
+        #         os.path.join(save_path, "audio_2.mp3"),
+        #         os.path.join(save_path, "text_2.txt")
+        #     ),
+        #     (
+        #         os.path.join(save_path, "image_3.jpg"),
+        #         os.path.join(save_path, "audio_3.mp3"),
+        #         os.path.join(save_path, "text_3.txt")
+        #     ),
+        #     (
+        #         os.path.join(save_path, "image_4.jpg"),
+        #         os.path.join(save_path, "audio_4.mp3"),
+        #         os.path.join(save_path, "text_4.txt")
+        #     ),
+        #     (
+        #         os.path.join(save_path, "image_5.jpg"),
+        #         os.path.join(save_path, "audio_5.mp3"),
+        #         os.path.join(save_path, "text_5.txt")
+        #     ),
+        #     (
+        #         os.path.join(save_path, "image_6.jpg"),
+        #         os.path.join(save_path, "audio_6.mp3"),
+        #         os.path.join(save_path, "text_6.txt")
+        #     ),
+        # ]
 
         # 3. 将素材信息存入Redis
         # 存储临时目录路径，设置1小时过期
@@ -1421,5 +1416,5 @@ def delete_session(session_id):
 
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(host='0.0.0.0', port=3000, debug=True)
     # CORS(app, resources={r"/api/*": {"origins": "http://localhost:5173"}})

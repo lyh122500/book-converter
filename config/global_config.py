@@ -24,7 +24,10 @@ class Config:
         api_key="sk-d3c3323a507846189cb71d387be22988",
         base_url="https://api.deepseek.com"
     )
-
+    dsclient2 = OpenAI(
+        api_key="sk-d3c3323a507846189cb71d387be22988",
+        base_url="https://api.deepseek.com"
+    )
 
     ecloudClient = OpenAI(
         api_key="AajlZARHvTpZARPumrdvS1tSuOUBsG1xbWHyznpGsmU",
@@ -41,7 +44,7 @@ class Config:
         # 此为默认路径，您可根据业务所在地域进行配置
         base_url="https://ark.cn-beijing.volces.com/api/v3",
         # 从环境变量中获取您的 API Key。此为默认方式，您可根据需要进行修改
-        api_key="336dc05b-8016-4cc9-a7a5-10e52fb387ac",
+        api_key="6442989c-c818-4776-a4ad-6fba46460919",
     )
 
     @staticmethod

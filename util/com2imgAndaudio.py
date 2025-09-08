@@ -49,7 +49,7 @@ def process_commentary(commentary: str, video_type="动漫类型", voice_type="z
         future_to_index = {}
         for idx, (sentence, enhanced_prompt) in enumerate(zip(sentences, enhanced_prompts)):
             # 图片任务（使用增强后的提示词）
-            future_to_index[executor.submit(_generate_and_download_image, enhanced_prompt, resolution)] = (idx, 'image')
+            future_to_index[executor.submit(_generate_and_download_image, enhanced_prompt,2, resolution)] = (idx, 'image')
             # 音频任务（使用原文）
             future_to_index[executor.submit(_generate_and_download_audio, sentence, voice_type)] = (idx, 'audio')
 
@@ -133,8 +133,8 @@ def _generate_single_enhanced_prompt(sentence: str, video_type: str) -> str:
 
         # 调用大模型API（这里使用示例代码，您需要替换为实际的API调用）
         # 假设Config有一个LLM客户端
-        response = Config.ecloudClient.chat.completions.create(
-            model="deepseek-v3",
+        response = Config.dsclient2.chat.completions.create(
+            model="deepseek-chat",
             messages=[
                 {"role": "system", "content": "你是一个专业的AI图片提示词生成器。"},
                 {"role": "user", "content": prompt_template}
@@ -144,7 +144,7 @@ def _generate_single_enhanced_prompt(sentence: str, video_type: str) -> str:
         )
 
         enhanced_prompt = response.choices[0].message.content.strip()
-
+        print(enhanced_prompt)
         # 确保提示词包含视频类型标签
         if f"[{video_type}]" not in enhanced_prompt:
             enhanced_prompt += f" [{video_type}]"
@@ -161,7 +161,10 @@ def _generate_and_download_image(prompt: str, max_retries: int = 2,resolution=(1
     retry_count = 0
     last_error = None
     size = str(resolution[0])+'x'+str(resolution[1])
+    print("i get here 1")
+
     while retry_count <= max_retries:
+        print("i get here 2")
         try:
             # 1. 生成图片URL（添加安全提示）
             response = Config.seeDreamClient.images.generate(
@@ -172,6 +175,9 @@ def _generate_and_download_image(prompt: str, max_retries: int = 2,resolution=(1
 
             # 2. 下载图片
             resp = requests.get(response.data[0].url, timeout=10)
+            print(response)
+            print(response.data[0].url)
+            print(response.data)
             resp.raise_for_status()
             return resp.content
 
