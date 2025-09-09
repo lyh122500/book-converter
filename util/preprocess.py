@@ -6,7 +6,7 @@ from pathlib import Path
 
 import jieba
 import os
-from opencc import OpenCC
+# from opencc import OpenCC
 
 from config.global_config import Config
 from dao import redisDao
@@ -135,8 +135,8 @@ def normalize_structure(text, book_title):
 def chinese_specific_processing(text):
     """中文文本特殊处理"""
     # 繁体转简体
-    cc = OpenCC('t2s')  # 繁体转简体
-    text = cc.convert(text)
+    # cc = OpenCC('t2s')  # 繁体转简体
+    # text = cc.convert(text)
 
     # 统一异体字
     variant_mapping = {
