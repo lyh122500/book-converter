@@ -49,7 +49,7 @@ def process_commentary(commentary: str, video_type="动漫类型", voice_type="z
         future_to_index = {}
         for idx, (sentence, enhanced_prompt) in enumerate(zip(sentences, enhanced_prompts)):
             # 图片任务（使用增强后的提示词）
-            future_to_index[executor.submit(_generate_and_download_image, enhanced_prompt,2, resolution)] = (idx, 'image')
+            #future_to_index[executor.submit(_generate_and_download_image, enhanced_prompt,2, resolution)] = (idx, 'image')
             # 音频任务（使用原文）
             future_to_index[executor.submit(_generate_and_download_audio, sentence, voice_type)] = (idx, 'audio')
 

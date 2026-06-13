@@ -566,12 +566,21 @@ def generate_assets():
         resolution_x = int(data.get('resolution_x', 1280))
         resolution_y = int(data.get('resolution_y', 720))
 
-        save_path, elements = process_commentary(
-            commentary,
-            video_type,
-            voice_type,
-            resolution=(resolution_x, resolution_y)
-        )
+        # save_path, elements = process_commentary(
+        #     commentary,
+        #     video_type,
+        #     voice_type,
+        #     resolution=(resolution_x, resolution_y)
+        # )
+        save_path = "output/result_20250910_162311"
+        elements = [
+            (
+                os.path.join(save_path, f"image_{i}.jpg"),
+                os.path.join(save_path, f"audio_{i}.mp3"),
+                os.path.join(save_path, f"text_{i}.txt")
+            )
+            for i in range(1, 102)  # 1到101（包含）
+        ]
 
         # 3. 将素材信息存入Redis
         # 存储临时目录路径，设置1小时过期
@@ -883,10 +892,10 @@ def generate_video():
             return jsonify({'error': 'No assets found for this session. Please generate assets first.'}), 404
 
         # 获取所有素材路径
-        text_paths = r.lrange(f"session:{session_id}:image_paths", 0, -1)
+        image_paths = r.lrange(f"session:{session_id}:image_paths", 0, -1)
 
-        image_paths = r.lrange(f"session:{session_id}:audio_paths", 0, -1)
-        audio_paths = r.lrange(f"session:{session_id}:text_paths", 0, -1)
+        audio_paths = r.lrange(f"session:{session_id}:audio_paths", 0, -1)
+        text_paths = r.lrange(f"session:{session_id}:text_paths", 0, -1)
 
         if not image_paths or not audio_paths or not text_paths:
             return jsonify({'error': 'Incomplete assets data'}), 404
@@ -1238,46 +1247,21 @@ def poetry_generate_assets():
         resolution_x = int(data.get('resolution_x', 1280))
         resolution_y = int(data.get('resolution_y', 720))
 
-        save_path, elements = process_commentary(
-            commentary,
-            video_type,
-            voice_type,
-            resolution=(resolution_x, resolution_y)
-        )
-        # save_path = "output/result_20250814_160147"
-        # elements = [
-        #     (
-        #         os.path.join(save_path, "image_1.jpg"),
-        #         os.path.join(save_path, "audio_1.mp3"),
-        #         os.path.join(save_path, "text_1.txt")
-        #     ),
-        #     (
-        #         os.path.join(save_path, "image_2.jpg"),
-        #         os.path.join(save_path, "audio_2.mp3"),
-        #         os.path.join(save_path, "text_2.txt")
-        #     ),
-        #     (
-        #         os.path.join(save_path, "image_3.jpg"),
-        #         os.path.join(save_path, "audio_3.mp3"),
-        #         os.path.join(save_path, "text_3.txt")
-        #     ),
-        #     (
-        #         os.path.join(save_path, "image_4.jpg"),
-        #         os.path.join(save_path, "audio_4.mp3"),
-        #         os.path.join(save_path, "text_4.txt")
-        #     ),
-        #     (
-        #         os.path.join(save_path, "image_5.jpg"),
-        #         os.path.join(save_path, "audio_5.mp3"),
-        #         os.path.join(save_path, "text_5.txt")
-        #     ),
-        #     (
-        #         os.path.join(save_path, "image_6.jpg"),
-        #         os.path.join(save_path, "audio_6.mp3"),
-        #         os.path.join(save_path, "text_6.txt")
-        #     ),
-        # ]
-
+        # save_path, elements = process_commentary(
+        #     commentary,
+        #     video_type,
+        #     voice_type,
+        #     resolution=(resolution_x, resolution_y)
+        # )
+        save_path = "output/result_20250910_162311"
+        elements = [
+            (
+                os.path.join(save_path, f"image_{i}.jpg"),
+                os.path.join(save_path, f"audio_{i}.mp3"),
+                os.path.join(save_path, f"text_{i}.txt")
+            )
+            for i in range(1, 102)  # 1到101（包含）
+        ]
         # 3. 将素材信息存入Redis
         # 存储临时目录路径，设置1小时过期
         r.setex(f"session:{session_id}:save_path", 3600, save_path)
@@ -1416,5 +1400,5 @@ def delete_session(session_id):
 
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(host='0.0.0.0', port=3000, debug=True)
     # CORS(app, resources={r"/api/*": {"origins": "http://localhost:5173"}})
